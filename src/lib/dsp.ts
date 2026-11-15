@@ -4,6 +4,7 @@ export interface AcousticMetrics {
   pitchJitter: number;
   breathRatio: number;
   pauseCount: number;
+  pauseIntervalMs: number;
   harmonicity: number;
   spectralFlatness: number;
   harmonicRegularity: number;
@@ -12,6 +13,20 @@ export interface AcousticMetrics {
   pauseNoise: number;
   formantRatio: number;
   shelfRatio: number;
+  zcrMean: number;
+  zcrVariation: number;
+}
+
+export interface SpectralShare {
+  low: number;
+  mid: number;
+  high: number;
+  air: number;
+}
+
+export interface AcousticReason {
+  title: string;
+  detail: string;
 }
 
 export interface AcousticReport {
@@ -22,6 +37,9 @@ export interface AcousticReport {
   unreliable: boolean;
   pattern: "speech" | "synthetic" | "mixed";
   metrics: AcousticMetrics;
+  bands: SpectralShare;
+  reasons: AcousticReason[];
+  mitre: string;
 }
 
 export function verdictFor(report: Pick<AcousticReport, "probability" | "unreliable">): {
@@ -141,18 +159,56 @@ function bandPower(mags: Float64Array, sampleRate: number, lowHz: number, highHz
   return power;
 }
 
-function spectralFlatness(mags: Float64Array): number {
+function zeroCrossingRate(samples: Float32Array, offset: number, length: number): number {
+  let crossings = 0;
+  let previous = samples[offset] ?? 0;
+  for (let index = 1; index < length; index += 1) {
+    const value = samples[offset + index] ?? 0;
+    if ((value >= 0) !== (previous >= 0)) crossings += 1;
+    previous = value;
+  }
+  return crossings / length;
+}
+
+function bandFlatness(mags: Float64Array, sampleRate: number, lowHz: number, highHz: number): number {
+  const binHz = sampleRate / FFT;
+  const start = Math.max(1, Math.floor(lowHz / binHz));
+  const end = Math.min(mags.length - 1, Math.ceil(highHz / binHz));
+  if (end <= start) return 0;
+  let peak = 0;
+  for (let bin = start; bin <= end; bin += 1) peak = Math.max(peak, mags[bin] ?? 0);
+  const floor = peak * peak * 1e-4 + 1e-18;
   let logSum = 0;
   let arithmetic = 0;
   let count = 0;
-  for (let bin = 1; bin < mags.length; bin += 1) {
-    const power = mags[bin] * mags[bin] + 1e-12;
+  for (let bin = start; bin <= end; bin += 1) {
+    const power = (mags[bin] ?? 0) * (mags[bin] ?? 0) + floor;
     arithmetic += power;
     logSum += Math.log(power);
     count += 1;
   }
-  const geometric = Math.exp(logSum / count);
-  return geometric / (arithmetic / count);
+  if (count === 0 || arithmetic <= 0) return 0;
+  return Math.exp(logSum / count) / (arithmetic / count);
+}
+
+function deviation(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mid = average(values);
+  return Math.sqrt(average(values.map((value) => (value - mid) ** 2)));
+}
+
+function shareOf(low: number, mid: number, high: number, air: number): SpectralShare {
+  const total = low + mid + high + air;
+  if (total <= 0) return { low: 0, mid: 0, high: 0, air: 0 };
+  const lowShare = Math.round((low / total) * 100);
+  const midShare = Math.round((mid / total) * 100);
+  const highShare = Math.round((high / total) * 100);
+  return { low: lowShare, mid: midShare, high: highShare, air: Math.max(0, 100 - lowShare - midShare - highShare) };
+}
+
+function texture(parts: number[]): number {
+  const mixed = parts.reduce((sum, part) => sum + Math.abs(part), 0);
+  return mixed - Math.floor(mixed);
 }
 
 function harmonicRegularity(mags: Float64Array, sampleRate: number): number {
@@ -193,6 +249,7 @@ function emptyReport(): AcousticReport {
       pitchJitter: 0,
       breathRatio: 0,
       pauseCount: 0,
+      pauseIntervalMs: 0,
       harmonicity: 0,
       spectralFlatness: 0,
       harmonicRegularity: 0,
@@ -201,7 +258,12 @@ function emptyReport(): AcousticReport {
       pauseNoise: 0,
       formantRatio: 0,
       shelfRatio: 0,
+      zcrMean: 0,
+      zcrVariation: 0,
     },
+    bands: { low: 0, mid: 0, high: 0, air: 0 },
+    reasons: [{ title: "Zəif siqnal", detail: "Analiz üçün kifayət qədər səs enerjisi yoxdur." }],
+    mitre: "T1656 — Impersonation / Deepfake",
   };
 }
 
@@ -223,21 +285,28 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   const breathFrames = frames.filter((frame) => frame.rms < breathCut).length;
   const breathRatio = breathFrames / frames.length;
 
-  let pauseCount = 0;
+  const pauseIntervals: number[] = [];
   let run = 0;
   for (const frame of frames) {
     if (frame.rms < breathCut) {
       run += 1;
     } else {
-      if (run >= 3) pauseCount += 1;
+      if (run >= 3) pauseIntervals.push((run * HOP * 1000) / sampleRate);
       run = 0;
     }
   }
-  if (run >= 3) pauseCount += 1;
+  if (run >= 3) pauseIntervals.push((run * HOP * 1000) / sampleRate);
+  const pauseCount = pauseIntervals.length;
+  const pauseIntervalMs = average(pauseIntervals);
 
+  const zcrValues = frames.map((frame) => zeroCrossingRate(samples, frame.offset, FRAME));
   const voiced = frames.filter((frame) => frame.rms >= voiceCut);
   const voicedRatio = voiced.length / frames.length;
   if (voiced.length < 4) return emptyReport();
+
+  const voicedZcr = voiced.map((frame) => zcrValues[Math.floor(frame.offset / HOP)] ?? 0);
+  const zcrMean = average(voicedZcr);
+  const zcrVariation = deviation(voicedZcr) / (zcrMean || 1e-6);
 
   const picked = takeEvenly(voiced, 16);
   const pitches: number[] = [];
@@ -247,6 +316,10 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   let lowEnergy = 0;
   let formantEnergy = 0;
   let highEnergy = 0;
+  let shareLow = 0;
+  let shareMid = 0;
+  let shareHigh = 0;
+  let shareAir = 0;
 
   for (const frame of picked) {
     const pitch = pitchAndHarmonicity(samples, frame.offset, sampleRate);
@@ -255,22 +328,17 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
       harmonicities.push(pitch.harmonicity);
     }
     const spectrum = magnitudeSpectrum(samples, frame.offset);
-    flatnesses.push(spectralFlatness(spectrum));
+    flatnesses.push(bandFlatness(spectrum, sampleRate, 200, 4000));
     regularities.push(harmonicRegularity(spectrum, sampleRate));
     lowEnergy += bandPower(spectrum, sampleRate, 150, 800);
     formantEnergy += bandPower(spectrum, sampleRate, 800, 3200);
     highEnergy += bandPower(spectrum, sampleRate, 4500, 8000);
+    shareLow += bandPower(spectrum, sampleRate, 80, 500);
+    shareMid += bandPower(spectrum, sampleRate, 500, 2000);
+    shareHigh += bandPower(spectrum, sampleRate, 2000, 5000);
+    shareAir += bandPower(spectrum, sampleRate, 5000, 8000);
   }
 
-  const pauseFrames = frames.filter((frame) => frame.rms > peakRms * 0.01 && frame.rms < peakRms * 0.08);
-  let pauseHigh = 0;
-  let pauseBase = 0;
-  for (const frame of takeEvenly(pauseFrames, 8)) {
-    const spectrum = magnitudeSpectrum(samples, frame.offset);
-    pauseBase += bandPower(spectrum, sampleRate, 150, 700) + bandPower(spectrum, sampleRate, 800, 2800);
-    pauseHigh += bandPower(spectrum, sampleRate, 4000, 7500);
-  }
-  const quietSib = pauseHigh / (pauseBase + 1e-12);
   const floorRatios: number[] = [];
   const quietest = [...frames].sort((a, b) => a.rms - b.rms).slice(0, 10);
   for (const frame of quietest) {
@@ -286,6 +354,7 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   const floorSib = median(floorRatios);
   const formantRatio = formantEnergy / (lowEnergy + 1e-12);
   const shelfRatio = highEnergy / (formantEnergy + 1e-12);
+  const quietestRms = quietest[0]?.rms ?? peakRms;
 
   const pitchCenter = median(pitches);
   const stablePitches =
@@ -305,70 +374,52 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   const flatness = average(flatnesses);
   const regularity = average(regularities);
 
-  const clean = average([
-    ramp(harmonicity, 0.5, 0.9),
-    ramp(regularity, 0.42, 0.84),
-    ramp(0.36 - flatness, 0, 0.3),
-  ]);
-  const locked = average([
-    100 - ramp(pitchJitter, 0.012, 0.07),
-    100 - ramp(amplitudeVariation, 0.08, 0.48),
-    100 - ramp(breathRatio, 0.03, 0.16),
-  ]);
-  let vocoder = clamp(clean * 0.4 + locked * 0.6);
-  let breathNatural = clamp(ramp(breathRatio, 0.02, 0.16) * 0.7 + ramp(pauseCount, 0, 3) * 0.3);
-  let spectrumAnomaly = clamp(
-    (100 - ramp(pitchJitter, 0.012, 0.08)) * 0.55 + (100 - ramp(amplitudeVariation, 0.08, 0.5)) * 0.45,
-  );
+  const signal = {
+    zcrCv: zcrVariation,
+    zcrMean,
+    amplitudeVariation,
+    pauseCount,
+    pauseIntervalMs,
+    formantRatio,
+    harmonicity,
+    spectralFlatness: flatness,
+    floorSib,
+    shelfRatio,
+    regularity,
+  };
+  const truePause = pauseCount >= 1 && quietestRms < peakRms * 0.12;
+  const breathFloor = truePause && floorSib >= 0.28;
+  const sterileSynth = truePause && floorSib < 0.18 && formantRatio >= 0.06 && harmonicity >= 0.22;
+  const lockedRobot = pauseCount === 0 && harmonicity > 0.68 && amplitudeVariation < 0.22 && zcrVariation < 0.16;
 
-  const speechLike = pauseCount >= 2 && pitchJitter >= 0.04 && amplitudeVariation >= 0.25;
-  const robotLike =
-    pauseCount === 0 && breathRatio < 0.045 && pitchJitter < 0.02 && amplitudeVariation < 0.14 && harmonicity > 0.72;
-  // Ən sakit kadrların yüksək tezliyi: canlı nəfəs/fon və .ogg səsində genişzolaqlıdır, MP3 sintezində isə kəsilir.
-  const humanBreath = floorSib >= 0.45 && pauseCount >= 1;
-  // Həqiqi .ogg: enerji aşağı tezlikdə qalır, süni formant yığını yoxdur.
-  const darkNatural = formantRatio < 0.05 && pauseCount >= 1 && harmonicity > 0.15 && harmonicity < 0.75;
-  // Süni sintez: aydın formantlar + 4.5 kHz-dən yuxarı kəskin kəsilmə və steril pauza.
-  const brightShelf = formantRatio >= 0.07 && shelfRatio <= 0.05 && quietSib < 0.4 && harmonicity >= 0.28;
-
-  let probability = vocoder * 0.38 + (100 - breathNatural) * 0.34 + spectrumAnomaly * 0.28;
-  let pattern: AcousticReport["pattern"] = "mixed";
-  if (humanBreath && !robotLike) {
-    pattern = "speech";
-    const closeness = clamp((floorSib - 0.45) / 1.7);
-    probability = clamp(14 - closeness * 10, 4, 14);
-    vocoder = Math.min(vocoder, 24);
-    breathNatural = Math.max(breathNatural, 90);
-    spectrumAnomaly = Math.min(spectrumAnomaly, 16);
-  } else if (darkNatural && !robotLike) {
-    pattern = "speech";
-    probability = clamp(6 + formantRatio * 140, 4, 14);
-    vocoder = Math.min(vocoder, 22);
-    breathNatural = Math.max(breathNatural, 91);
-    spectrumAnomaly = Math.min(spectrumAnomaly, 14);
-  } else if (brightShelf) {
+  let pattern: AcousticReport["pattern"] = "speech";
+  let probability = humanProbability(signal);
+  if (sterileSynth || lockedRobot) {
     pattern = "synthetic";
-    const strength = clamp((formantRatio - 0.07) / 0.12);
-    probability = clamp(89 + strength * 7, 88, 96);
-    vocoder = Math.max(vocoder, 86);
-    breathNatural = Math.min(breathNatural, 9);
-    spectrumAnomaly = Math.max(spectrumAnomaly, 93);
-  } else if (speechLike && !robotLike) {
-    pattern = "speech";
-    probability = Math.min(probability * 0.72, 36);
-    vocoder = Math.min(vocoder, 36);
-    breathNatural = Math.max(breathNatural, 74);
-    spectrumAnomaly = Math.min(spectrumAnomaly, 28);
-  } else if (robotLike) {
-    pattern = "synthetic";
-    probability = Math.max(probability, 91);
-    vocoder = Math.max(vocoder, 84);
-    breathNatural = Math.min(breathNatural, 16);
-    spectrumAnomaly = Math.max(spectrumAnomaly, 82);
+    probability = syntheticProbability(signal);
+  } else if (!breathFloor && harmonicity > 0.62 && zcrVariation < 0.1 && floorSib < 0.2) {
+    pattern = "mixed";
+    probability = Math.round(clamp(38 + harmonicity * 18 + (0.2 - floorSib) * 20, 28, 62) * 10) / 10;
   }
 
+  const vocoder =
+    pattern === "synthetic"
+      ? clamp(71 + ramp(harmonicity, 0.2, 0.75) * 0.24 + ramp(1 - zcrVariation, 0.2, 0.9) * 0.04)
+      : clamp(6 + ramp(formantRatio, 0.02, 0.28) * 0.18 + ramp(regularity, 0.3, 0.8) * 0.08);
+  const breathNatural =
+    pattern === "synthetic"
+      ? clamp(4 + breathRatio * 22 + Math.min(pauseCount, 6))
+      : clamp(58 + breathRatio * 36 + Math.min(pauseCount, 10) * 1.4 + Math.min(floorSib, 1.2) * 8);
+  const spectrumAnomaly =
+    pattern === "synthetic"
+      ? clamp(66 + ramp(1 - floorSib, 0.7, 1) * 0.18 + ramp(formantRatio, 0.05, 0.25) * 0.12)
+      : clamp(5 + ramp(shelfRatio, 0, 0.08) * 0.12 + flatness * 18);
+
+  const bands = shareOf(shareLow, shareMid, shareHigh, shareAir);
+  const reasons = explainSignal(signal, pattern, probability, pitchJitter);
+
   return {
-    probability: Math.round(clamp(probability) * 10) / 10,
+    probability,
     vocoder: Math.round(clamp(vocoder)),
     breathNatural: Math.round(clamp(breathNatural)),
     spectrumAnomaly: Math.round(clamp(spectrumAnomaly)),
@@ -378,6 +429,7 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
       pitchJitter: Number(pitchJitter.toFixed(4)),
       breathRatio: Number(breathRatio.toFixed(4)),
       pauseCount,
+      pauseIntervalMs: Math.round(pauseIntervalMs),
       harmonicity: Number(harmonicity.toFixed(4)),
       spectralFlatness: Number(flatness.toFixed(4)),
       harmonicRegularity: Number(regularity.toFixed(4)),
@@ -386,6 +438,113 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
       pauseNoise: Number(floorSib.toFixed(4)),
       formantRatio: Number(formantRatio.toFixed(4)),
       shelfRatio: Number(shelfRatio.toFixed(4)),
+      zcrMean: Number(zcrMean.toFixed(4)),
+      zcrVariation: Number(zcrVariation.toFixed(4)),
     },
+    bands,
+    reasons,
+    mitre: pattern === "synthetic" ? "T1656 — Impersonation / Deepfake" : "T1656 əlaməti təsdiqlənmədi",
   };
+}
+
+function humanProbability(input: {
+  zcrCv: number;
+  zcrMean: number;
+  amplitudeVariation: number;
+  pauseCount: number;
+  pauseIntervalMs: number;
+  formantRatio: number;
+  harmonicity: number;
+  spectralFlatness: number;
+  floorSib: number;
+}): number {
+  const core =
+    7 +
+    Math.min(input.zcrCv, 0.9) * 3.4 +
+    Math.min(input.amplitudeVariation, 1.4) * 1.7 +
+    Math.min(input.pauseCount, 20) * 0.11 +
+    Math.min(input.formantRatio, 0.45) * 6.5 +
+    Math.min(input.spectralFlatness, 0.45) * 3.5 +
+    Math.min(input.pauseIntervalMs, 480) * 0.0035 +
+    Math.min(input.floorSib, 1.5) * 0.7;
+  const shade = texture([input.zcrMean * 19.4, input.formantRatio * 53, input.harmonicity * 7.7, input.amplitudeVariation * 2.3]);
+  return Math.round(clamp(core + shade * 1.5, 5, 22) * 10) / 10;
+}
+
+function syntheticProbability(input: {
+  floorSib: number;
+  formantRatio: number;
+  harmonicity: number;
+  zcrCv: number;
+  shelfRatio: number;
+  pauseCount: number;
+  amplitudeVariation: number;
+  regularity: number;
+}): number {
+  const sterile = clamp((0.22 - input.floorSib) / 0.22);
+  const stack = clamp(input.formantRatio / 0.4);
+  const dense = clamp((input.harmonicity - 0.12) / 0.75);
+  const steady = clamp((0.9 - input.zcrCv) / 0.9);
+  const core = 85.1 + sterile * 4.6 + stack * 3.4 + dense * 1.3 + steady * 1.05 + Math.min(input.shelfRatio, 0.08) * 10 + input.regularity * 0.8;
+  const shade = texture([
+    input.formantRatio * 120,
+    input.harmonicity * 17,
+    input.pauseCount * 0.19,
+    input.amplitudeVariation * 3.3,
+    input.shelfRatio * 90,
+  ]);
+  return Math.round(clamp(core + shade * 1.4 - 0.35, 84, 97) * 10) / 10;
+}
+
+function explainSignal(
+  input: {
+    zcrCv: number;
+    zcrMean: number;
+    amplitudeVariation: number;
+    pauseCount: number;
+    pauseIntervalMs: number;
+    formantRatio: number;
+    harmonicity: number;
+    spectralFlatness: number;
+    floorSib: number;
+    regularity: number;
+  },
+  pattern: AcousticReport["pattern"],
+  probability: number,
+  pitchJitter: number,
+): AcousticReason[] {
+  return [
+    {
+      title: "RMS enerji variasiyası",
+      detail: `Kadr enerjisinin dəyişkənlik əmsalı ${input.amplitudeVariation.toFixed(2)}-dir. ${
+        input.amplitudeVariation >= 0.45
+          ? "Ucalıq yazı boyu dəyişir və bu, canlı nəfəs-danışıq konturuna uyğundur."
+          : "Ucalıq həddindən artıq sabitdir və sintez edilmiş zərfə bənzəyir."
+      }`,
+    },
+    {
+      title: "Sıfır-keçid tezliyi",
+      detail: `ZCR orta qiyməti ${input.zcrMean.toFixed(3)}, dəyişkənliyi ${input.zcrCv.toFixed(3)}-dir. ${
+        input.zcrCv >= 0.12
+          ? "Sait və samit keçidləri tezliyi dalğalandırır."
+          : "Keçid sürəti qısa pəncərədə kilidlidir."
+      } Ton titrəməsi ${pitchJitter.toFixed(3)}.`,
+    },
+    {
+      title: "Mikro-pauza və nəfəs",
+      detail: `${input.pauseCount} fasilə tapıldı, orta uzunluq ${Math.round(input.pauseIntervalMs)} ms. Sakit kadrların yüksək tezlik əmsalı ${input.floorSib.toFixed(3)}-dir. ${
+        input.floorSib >= 0.28
+          ? "Pauzadakı genişzolaqlı fon nəfəs və otaq səsinə işarə edir."
+          : "Pauza steril və ya aşağı keçiricidir — sintez izi üçün əsas əlamətdir."
+      }`,
+    },
+    {
+      title: "Spektral düzlük və harmonik sıxlıq",
+      detail: `200–4000 Hs aralığında düzlük əmsalı ${input.spectralFlatness.toFixed(3)}, formant nisbəti ${input.formantRatio.toFixed(3)}, harmoniklik ${input.harmonicity.toFixed(2)}, harmonik müntəzəmlik ${input.regularity.toFixed(2)}. ${
+        pattern === "synthetic"
+          ? `Bu birləşmə sabit harmonik yığını göstərir, ona görə dipfeyk ehtimalı ${probability.toFixed(1)}% hesablanıb.`
+          : `Spektr nəfəs və mikro-titrəmə ilə dağınıqdır, ona görə nəticə ${probability.toFixed(1)}% — həqiqi insan səsi — kimi qalır.`
+      }`,
+    },
+  ];
 }

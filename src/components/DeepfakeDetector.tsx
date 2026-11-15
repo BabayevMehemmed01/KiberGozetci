@@ -7,6 +7,7 @@ import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
+import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Meter, Panel } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
 
@@ -335,18 +336,47 @@ export function DeepfakeDetector() {
                 hint={video ? `Kadr sinxronu ${video.lipSync}% · hamarlıq ${video.smoothness}% · titrəmə ${video.flicker}%` : "Video kadrı yoxdur — göstərici hesablanmayıb"}
               />
               <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                <Metric label="Ton titrəməsi" value={report.metrics.pitchJitter.toFixed(3)} />
-                <Metric label="Nəfəs nisbəti" value={report.metrics.breathRatio.toFixed(2)} />
-                <Metric label="Harmonik təmizlik" value={report.metrics.harmonicity.toFixed(2)} />
-                <Metric label="Amplituda dəyişkənliyi" value={report.metrics.amplitudeVariation.toFixed(2)} />
+                <Metric label="RMS variasiyası" value={report.metrics.amplitudeVariation.toFixed(2)} />
+                <Metric label="ZCR dəyişkənliyi" value={report.metrics.zcrVariation.toFixed(3)} />
+                <Metric label="Mikro-pauza" value={`${report.metrics.pauseCount} · ${report.metrics.pauseIntervalMs} ms`} />
+                <Metric label="Spektral düzlük" value={report.metrics.spectralFlatness.toFixed(3)} />
               </div>
-              <ul className="space-y-2 text-sm text-slate-300">
-                {describe(report, video).map((line) => (
-                  <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
-                    {line}
-                  </li>
-                ))}
-              </ul>
+              <div>
+                <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SPEKTRAL ENERJİ PAYLANMASI</div>
+                <div className="mt-2 space-y-2">
+                  <Band label="80–500 Hs" value={report.bands.low} />
+                  <Band label="0.5–2 kHs" value={report.bands.mid} />
+                  <Band label="2–5 kHs" value={report.bands.high} />
+                  <Band label="5–8 kHs" value={report.bands.air} />
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SÜNİ İNTELLEKT İZAHI</div>
+                <ul className="mt-2 space-y-2 text-sm text-slate-300">
+                  {report.reasons.map((reason) => (
+                    <li key={reason.title} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
+                      <div className="font-semibold text-slate-100">{reason.title}</div>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">{reason.detail}</p>
+                    </li>
+                  ))}
+                  {describe(report, video).map((line) => (
+                    <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <DefenseInsight
+                stacked
+                techniques={[
+                  { code: "T1656", name: report.pattern === "synthetic" ? "Impersonation / Deepfake" : "Əlamət təsdiqlənmədi" },
+                ]}
+                steps={[
+                  `RMS variasiyası ${report.metrics.amplitudeVariation.toFixed(2)} və ZCR dəyişkənliyi ${report.metrics.zcrVariation.toFixed(3)} birinci qərar budağıdır.`,
+                  `${report.metrics.pauseCount} mikro-pauza və sakit kadr əmsalı ${report.metrics.pauseNoise.toFixed(3)} nəfəs budağını seçir.`,
+                  `Spektral düzlük ${report.metrics.spectralFlatness.toFixed(3)} və formant nisbəti ${report.metrics.formantRatio.toFixed(3)} yekun faizi ${report.probability.toFixed(1)}% edir.`,
+                ]}
+              />
               <button
                 type="button"
                 disabled={report.probability < 40 || report.unreliable || loggedLabel === label}
@@ -366,6 +396,18 @@ export function DeepfakeDetector() {
   );
 }
 
+function Band({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="grid grid-cols-[88px_1fr_36px] items-center gap-2 text-[11px] text-slate-400">
+      <span>{label}</span>
+      <span className="h-1.5 overflow-hidden rounded-full bg-[#060B14]">
+        <span className="block h-full rounded-full bg-cyan-300" style={{ width: `${value}%` }} />
+      </span>
+      <span className="font-mono text-slate-200">{value}%</span>
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-[#1E293B] px-2 py-1.5">
@@ -375,23 +417,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function describe(report: AcousticReport, clip: VideoForensics | null): string[] {
-  if (report.unreliable) return ["Faylda analiz üçün kifayət qədər səs enerjisi yoxdur."];
-  const lines = [
-    report.vocoder >= 70
-      ? "Harmoniklər süni dərəcədə təmiz və sabitdir — sintez izi güclüdür."
-      : "Harmonik quruluş insan danışığındakı təbii dağınıqlığa daha yaxındır.",
-    report.breathNatural >= 60
-      ? "Danışıq arasında təbii nəfəs fasilələri və mikro-titrəmə ölçülüb."
-      : "Təbii nəfəs fasilələri demək olar ki, yoxdur.",
-    report.spectrumAnomaly >= 70
-      ? "Tezlik spektrində kəskin kəsilmə və həddindən artıq sabit harmoniklər var."
-      : "Ton hündürlüyü və ucalıq yazı boyu təbii dəyişir.",
-  ];
-  if (!clip) {
-    lines.push("Video kadrı yoxdur — dodaq və səs uyğunluğu hesablanmayıb.");
-    return lines;
-  }
+function describe(_report: AcousticReport, clip: VideoForensics | null): string[] {
+  if (!clip) return ["Video kadrı yoxdur — dodaq və səs uyğunluğu hesablanmayıb."];
+  const lines: string[] = [];
   lines.push(
     clip.lipSync >= 65
       ? "Kadr hərəkəti səs enerjisi ilə uyğun gedir."

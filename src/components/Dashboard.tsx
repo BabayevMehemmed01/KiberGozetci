@@ -15,10 +15,24 @@ const LAYERS: { tab: AppTab; index: string; title: string; text: string }[] = [
   { tab: "insider", index: "03", title: "Daxili davranış", text: "Sapma, hesabın dondurulması və təlim" },
 ];
 
+const BLOCKED_DOMAINS = ["vergi-teyid-merkezi.xyz", "maliyye-kocurme.top", "secure-wire-update.xyz", "bank-bezopasnost.click"];
+
 export function Dashboard() {
   const { phishingBlocked, deepfakeCaught, frozenCount, averageScore, feed, setTab, simulationLocked, employees, lockedEmployeeId } = useSoc();
   const lockedEmployee = employees.find((employee) => employee.id === lockedEmployeeId);
   const trend = useMemo(() => buildAttackTrend(), []);
+  const [latency, setLatency] = useState({ phishing: 18, deepfake: 46, insider: 27 });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setLatency({
+        phishing: 16 + Math.round(Math.random() * 7),
+        deepfake: 41 + Math.round(Math.random() * 12),
+        insider: 22 + Math.round(Math.random() * 8),
+      });
+    }, 1600);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -40,15 +54,16 @@ export function Dashboard() {
         <KpiCard label="Orta kiber-sayıqlıq balı" value={`${averageScore} / 100`} note="12 əməkdaş üzrə" icon="gauge" tone="good" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-5">
-        <Panel className="xl:col-span-3">
+      <div className="grid items-stretch gap-4 xl:grid-cols-5">
+        <div className="flex flex-col gap-4 xl:col-span-3">
+        <Panel>
           <div className="mb-3 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-white">Son 7 günün hücum dinamikası</h3>
               <p className="text-xs text-slate-500">Fişinq, dipfeyk və daxili anomaliya</p>
             </div>
           </div>
-          <div className="h-[300px]">
+          <div className="h-[240px]">
             <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 720, height: 300 }}>
               <AreaChart data={trend} margin={{ top: 10, right: 8, left: -18, bottom: 0 }}>
                 <defs>
@@ -80,7 +95,39 @@ export function Dashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel className="xl:col-span-2">
+        <Panel>
+          <h3 className="text-sm font-semibold text-white">Canlı Müdafiə Matrisi və Təhdid Kəşfiyyatı</h3>
+          <p className="mt-1 text-xs text-slate-500">Üç mühərrikin emal sürəti, qorunan son nöqtələr və son bloklar</p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <EngineSpeed label="Fişinq mühərriki" value={latency.phishing} />
+            <EngineSpeed label="Dipfeyk mühərriki" value={latency.deepfake} />
+            <EngineSpeed label="Davranış mühərriki" value={latency.insider} />
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-3">
+              <div className="text-[11px] font-bold tracking-wide text-slate-500">AKTİV QORUNAN SON NÖQTƏ</div>
+              <div className="mt-1 font-mono text-2xl text-white">84</div>
+              <p className="text-xs text-slate-400">{employees.length} əməkdaş hesabı daxil olmaqla</p>
+            </div>
+            <div className="rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-3">
+              <div className="text-[11px] font-bold tracking-wide text-slate-500">SON BLOKLANAN DOMENLƏR</div>
+              <ul className="mt-2 space-y-1 font-mono text-[11px] text-cyan-200">
+                {BLOCKED_DOMAINS.map((domain) => (
+                  <li key={domain}>{domain}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {["T1566.002 Spearphishing Link", "T1656 Impersonation", "T1078 Valid Accounts", "T1048 Exfiltration"].map((item) => (
+              <span key={item} className="rounded-full border border-[#1E293B] px-2 py-1 font-mono text-[10px] text-slate-300">
+                {item}
+              </span>
+            ))}
+          </div>
+        </Panel>
+        </div>
+        <Panel className="flex h-full flex-col xl:col-span-2">
           <LiveFeed events={feed} />
         </Panel>
       </div>
@@ -110,6 +157,18 @@ export function Dashboard() {
         </div>
         <EmployeeTable />
       </Panel>
+    </div>
+  );
+}
+
+function EngineSpeed({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-cyan-400/20 bg-[#060B14] px-3 py-3">
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className="mt-1 font-mono text-xl text-cyan-100">
+        {value}
+        <span className="ml-1 text-xs text-slate-500">ms</span>
+      </div>
     </div>
   );
 }

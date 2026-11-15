@@ -3,6 +3,7 @@ import { Link2, ShieldBan } from "lucide-react";
 import { phishingTemplates } from "../data/mockData.ts";
 import { analyzePhishing, type PhishingReport } from "../lib/phishingEngine.ts";
 import { useSoc } from "../context/SocContext.tsx";
+import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Meter, Panel } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
 
@@ -133,6 +134,26 @@ export function PhishingAnalyzer() {
               <Meter label="Saxta domen riski" value={report.domain} intent="risk" />
               <Meter label="Üslub uyğunsuzluğu" value={report.style} intent="risk" />
               <Meter label="Məlumat oğurluğu ehtimalı" value={report.theft} intent="risk" />
+              <DefenseInsight
+                techniques={
+                  report.quarantine === "tehlukesiz"
+                    ? [{ code: "—", name: "Uyğun hücum texnikası yoxdur" }]
+                    : [
+                        { code: "T1566.002", name: "Spearphishing Link" },
+                        ...(report.theft >= 28 ? [{ code: "T1056", name: "Input Capture" }] : []),
+                      ]
+                }
+                steps={[
+                  `Təcililik balı ${report.urgency} ümumi riskə 36% çəki ilə daxil olur.`,
+                  `Domen balı ${report.domain} 30% çəki daşıyır.`,
+                  `Üslub balı ${report.style} 16%, oğurluq balı ${report.theft} 18% çəki daşıyır.`,
+                  report.quarantine === "alindi"
+                    ? `Cəm ${report.overall}% karantin həddi olan 70-i keçir, ona görə mesaj təcrid olunur.`
+                    : report.quarantine === "nezaret"
+                      ? `Cəm ${report.overall}% nəzarət zolağındadır (40–69).`
+                      : `Cəm ${report.overall}% təhlükəsiz həddin altındadır.`,
+                ]}
+              />
               <button
                 type="button"
                 disabled={!canLog}

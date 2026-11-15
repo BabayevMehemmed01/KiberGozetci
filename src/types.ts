@@ -36,6 +36,9 @@ export interface FeedEvent {
   severity: FeedSeverity;
   category: FeedCategory;
   source: FeedSource;
+  sourceIp?: string;
+  mitre?: string;
+  technical?: string;
 }
 
 export interface AttackPoint {

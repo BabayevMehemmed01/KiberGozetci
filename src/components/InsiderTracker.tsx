@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { GraduationCap } from "lucide-react";
 import { questionsFor } from "../data/mockData.ts";
-import { getBreach, hourlyProfile, simulationBreach } from "../lib/behavior.ts";
+import { getBreach, hourlyProfile, profileStats, simulationBreach } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
+import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Panel } from "./ui.tsx";
 import { cn, fullName, workHours } from "../lib/utils.ts";
 
 export function InsiderTracker() {
-  const { employees, simulationLocked, applyTraining, lockedEmployeeId } = useSoc();
+  const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze } = useSoc();
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
   const [showBreach, setShowBreach] = useState(true);
   const [step, setStep] = useState(0);
@@ -18,7 +19,8 @@ export function InsiderTracker() {
 
   const employee = employees.find((item) => item.id === employeeId) ?? employees[0];
   const story = simulationLocked && employee.id === lockedEmployeeId ? simulationBreach(employee) : getBreach(employee.id);
-  const points = useMemo(() => hourlyProfile(employee, showBreach && Boolean(story), story), [employee, showBreach, story]);
+  const points = useMemo(() => hourlyProfile(employee, showBreach, story), [employee, showBreach, story]);
+  const stats = useMemo(() => profileStats(points), [points]);
   const questions = useMemo(() => questionsFor(employee.department), [employee.department]);
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function InsiderTracker() {
 
   function selectEmployee(id: string) {
     setEmployeeId(id);
-    setShowBreach(Boolean(getBreach(id)));
+    setShowBreach(true);
   }
 
   function advance() {
@@ -86,8 +88,7 @@ export function InsiderTracker() {
             <button
               type="button"
               onClick={() => setShowBreach((value) => !value)}
-              disabled={!story}
-              className="rounded-xl border border-[#1E293B] px-3 py-2.5 text-xs font-semibold text-slate-200 disabled:opacity-40"
+              className="rounded-xl border border-[#1E293B] px-3 py-2.5 text-xs font-semibold text-slate-200"
             >
               {showBreach ? "Şübhəli aktivlik açıqdır" : "Şübhəli aktivliyi göstər"}
             </button>
@@ -102,7 +103,10 @@ export function InsiderTracker() {
                 <XAxis dataKey="hour" interval={2} stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip
-                  contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 12 }}
+                  cursor={{ fill: "rgba(6, 182, 212, 0.08)" }}
+                  contentStyle={{ background: "#0B1220", border: "1px solid #1E293B", borderRadius: 12, color: "#E2E8F0" }}
+                  labelStyle={{ color: "#E2E8F0" }}
+                  itemStyle={{ color: "#E2E8F0" }}
                   formatter={(value, name, item) => {
                     const payload = item.payload as { fakt?: number; norma?: number };
                     if (name === "Qeydə alınan") {
@@ -125,13 +129,32 @@ export function InsiderTracker() {
           ) : null}
         </Panel>
 
-        <Panel className={cn(simulationLocked && employee.id === lockedEmployeeId && "border-red-400/50")}>
-          {story && showBreach ? (
+        <Panel className={cn("space-y-4", simulationLocked && employee.id === lockedEmployeeId && "border-red-400/50")}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-3">
+              <div className="text-[11px] font-bold tracking-wide text-slate-500">Z-SCORE</div>
+              <div className="mt-1 font-mono text-2xl text-white">{stats.zScore.toLocaleString("az-AZ", { maximumFractionDigits: 1 })}</div>
+              <p className="text-[11px] text-slate-500">σ = {stats.deviation.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-3">
+              <div className="text-[11px] font-bold tracking-wide text-slate-500">RİSK İNDEKSİ</div>
+              <div className={cn("mt-1 font-mono text-2xl", stats.risk >= 70 ? "text-red-200" : "text-amber-200")}>{stats.risk}</div>
+              <p className="text-[11px] text-slate-500">saat {stats.hour}:00 zirvəsi</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleFreeze(employee.id)}
+            className="w-full rounded-xl border border-red-400/40 bg-red-500/15 py-2.5 text-sm font-bold text-red-100"
+          >
+            {employee.status === "Dondurulub" ? "Hesab dondurulub — aktivləşdir" : "Hesabı dərhal dondur"}
+          </button>
+          {showBreach ? (
             <div>
               <div className="text-[11px] font-bold tracking-[0.16em] text-red-300">ANOMALİYA</div>
               <h3 className="mt-2 text-lg font-bold text-white">{story.title}</h3>
               <div className="mt-4 font-mono text-4xl font-semibold text-red-200">{story.files.toLocaleString("az-AZ")}</div>
-              <p className="text-xs text-slate-400">fayl · norma {employee.avgDailyDownloads}/gün</p>
+              <p className="text-xs text-slate-400">fayl · norma {employee.avgDailyDownloads}/gün · IP {story.sourceIp}</p>
               <p className="mt-3 text-sm leading-6 text-slate-300">{story.detail}</p>
               <p className="mt-3 text-sm font-semibold text-amber-200">
                 Sapma: təxminən {Math.round(story.files / employee.avgDailyDownloads).toLocaleString("az-AZ")} dəfə norma.
@@ -140,12 +163,25 @@ export function InsiderTracker() {
           ) : (
             <div>
               <div className="text-[11px] font-bold tracking-[0.16em] text-emerald-300">NORMAL RİTM</div>
-              <h3 className="mt-2 text-lg font-bold text-white">Kritik sapma yoxdur</h3>
+              <h3 className="mt-2 text-lg font-bold text-white">Şübhəli sütun gizlədilib</h3>
               <p className="mt-3 text-sm leading-6 text-slate-300">
-                {fullName(employee)} üçün son profil şəxsi bazasına uyğundur. Gündəlik orta yükləmə {employee.avgDailyDownloads} fayldır və iş saatı {workHours(employee)} aralığındadır.
+                {fullName(employee)} üçün baza ritmi iş saatı {workHours(employee)} aralığına və gündəlik {employee.avgDailyDownloads} fayl normasına görə qurulub.
               </p>
             </div>
           )}
+          <DefenseInsight
+            stacked
+            techniques={[
+              { code: story.mitre.split(" — ")[0] ?? story.mitre, name: story.mitre.split(" — ")[1] ?? "Exfiltration" },
+              { code: "T1078", name: "Valid Accounts" },
+            ]}
+            steps={[
+              `Normal ritm ${employee.department} şöbəsinin növbəsinə və ${employee.avgDailyDownloads} fayl/gün limitinə görə fərdi qurulur.`,
+              `Zirvə saat ${stats.hour}:00-da ${stats.files.toLocaleString("az-AZ")} fayldır. Saatlıq norma σ = ${stats.deviation.toFixed(2)}.`,
+              `Z-score = (müşahidə − norma) / σ = ${stats.zScore.toLocaleString("az-AZ", { maximumFractionDigits: 1 })}.`,
+              `Risk indeksi ${stats.risk}/100 bu sapmadan törəyir. Hədd yüksəkdirsə hesab dondurulur.`,
+            ]}
+          />
         </Panel>
       </div>
 

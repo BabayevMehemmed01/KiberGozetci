@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RotateCcw, Volume2, VolumeX, X } from "lucide-react";
 import { RASHAD_ID } from "../data/mockData.ts";
+import { getBreach } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { playStageCue, stopTones } from "../lib/tones.ts";
 import { cn, fullName } from "../lib/utils.ts";
@@ -18,15 +19,19 @@ function buildStages(employee: Employee) {
   const name = fullName(employee);
   const ip = attackIp(employee);
   const limit = employee.avgDailyDownloads;
+  const story = getBreach(employee.id);
+  const clock = `${String(story.hour).padStart(2, "0")}:${String(story.minute).padStart(2, "0")}`;
+  const files = story.files.toLocaleString("az-AZ");
   return [
     {
       clock: "00:01",
       title: "Çoxkanallı hücum başlayır",
       risk: 89,
-      detail: `${employee.department} şöbəsinin əməkdaşı ${name} üçün saxta vergi bildirişi (fişinq) və rəhbərin klonlanmış səsi ilə təcili dipfeyk səs mesajı gəlir. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə linkə klikləyir.`,
+      mitre: "T1566.002 — Spearphishing Link",
+      detail: `${employee.department} şöbəsinin əməkdaşı ${name} üçün saxta bildiriş və klonlanmış səs mesajı gəlir. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə linkə klikləyir.`,
       logs: [
-        `QAT 1 · Fişinq mühərriki ${name} üçün saxta vergi bildirişini qeydə aldı.`,
-        "QAT 2 · Dipfeyk detektoru klonlanmış rəhbər səsini aşkarladı.",
+        `QAT 1 · Fişinq mühərriki ${name} üçün saxta bildirişi qeydə aldı. T1566.002.`,
+        "QAT 2 · Dipfeyk detektoru klonlanmış səsi aşkarladı. T1656.",
         `${name} keçidə kliklədi. Risk: 89%.`,
       ],
     },
@@ -34,27 +39,77 @@ function buildStages(employee: Employee) {
       clock: "00:04",
       title: "Hesab ələ keçirilir",
       risk: 93,
-      detail: `Haker oğurlanmış şifrə ilə gecə saat 02:43-də xarici IP ünvanından (${ip}) ${employee.email} hesabına sızır.`,
-      logs: [`Xarici IP ${ip} saat 02:43-də ${name} sessiyasını (${employee.email}) açdı.`],
+      mitre: "T1078 — Valid Accounts",
+      detail: `Haker oğurlanmış şifrə ilə saat ${clock}-da ${ip} ünvanından ${employee.email} hesabına sızır.`,
+      logs: [`Xarici IP ${ip} saat ${clock}-da ${name} sessiyasını (${employee.email}) açdı.`],
     },
     {
       clock: "00:07",
       title: "Daxili davranış anomaliyası",
       risk: 97,
-      detail: `Haker 2 dəqiqə ərzində 14.500 müştəri məlumatını (CRM bazası) ixrac etməyə başlayır. Normal limit: ${limit} fayl/gün.`,
-      logs: [`QAT 3 · 2 dəqiqəyə 14.500 CRM qeydi ixrac olunur. Norma: ${limit} fayl/gün.`],
+      mitre: story.mitre,
+      detail: `${story.title}. ${files} fayl çıxarılır. Normal limit: ${limit} fayl/gün.`,
+      logs: [`QAT 3 · ${clock}-da ${files} fayl ixrac olunur. Norma: ${limit} fayl/gün. ${story.mitre}.`],
     },
     {
       clock: "00:09",
       title: "Zəncirvari əlaqələndirmə və avtomatik bloklama",
       risk: 99,
-      detail: `KiberGözətçi 1-ci və 2-ci qatdakı xəbərdarlıqları 3-cü qatdakı kütləvi yükləmə ilə birləşdirir. Vahid risk balı 99/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
+      mitre: "T1078 — Valid Accounts",
+      detail: `KiberGözətçi üç qatı birləşdirir. Vahid risk balı 99/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
       logs: [
         "Üç qat birləşdirildi. Vahid risk balı: 99/100 (KRİTİK).",
         `${name} hesabı donduruldu. İxrac dayandı. İdarəetmə panelindəki say yeniləndi.`,
       ],
     },
   ];
+}
+
+function escapeHtml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function downloadIncident(employee: Employee, stages: ReturnType<typeof buildStages>, ip: string) {
+  const name = fullName(employee);
+  const rows = stages
+    .map(
+      (stage) =>
+        `<tr><td>${stage.clock}</td><td>${escapeHtml(stage.title)}</td><td>${escapeHtml(stage.mitre)}</td><td>${stage.risk}</td><td>${escapeHtml(stage.detail)}</td></tr>`,
+    )
+    .join("");
+  const html = `<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <title>KiberGözətçi insident hesabatı — ${escapeHtml(name)}</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; color: #0f172a; margin: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p { color: #334155; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 13px; }
+    th { background: #0f172a; color: white; }
+    @media print { body { margin: 12mm; } }
+  </style>
+</head>
+<body>
+  <h1>KiberGözətçi — kiber-insident hesabatı</h1>
+  <p>Hədəf: ${escapeHtml(name)} · ${escapeHtml(employee.position)} · ${escapeHtml(employee.department)}</p>
+  <p>Hesab: ${escapeHtml(employee.email)} · Hücum IP: ${escapeHtml(ip)} · Vahid risk: 99/100 (KRİTİK)</p>
+  <p>Tədbir: hesab donduruldu, ixrac dayandırıldı, sessiya bağlandı.</p>
+  <table>
+    <thead><tr><th>Vaxt</th><th>Mərhələ</th><th>MITRE ATT&CK</th><th>Risk</th><th>Təfərrüat</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>`;
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `kibergozetci-insident-${employee.id}.html`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function formatElapsed(ms: number): string {
@@ -230,6 +285,7 @@ export function KillChainModal() {
                         <span className="font-mono text-cyan-200">{item.clock}</span>
                       </div>
                       <h3 className="mt-2 text-sm font-bold text-white">{item.title}</h3>
+                      <p className="mt-1 font-mono text-[11px] text-amber-200">{item.mitre}</p>
                       <p className="mt-2 text-xs leading-5 text-slate-300">{item.detail}</p>
                     </article>
                   );
@@ -243,6 +299,14 @@ export function KillChainModal() {
               </div>
 
               <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={simPhase !== "done"}
+                  onClick={() => downloadIncident(target, stages, attackIp(target))}
+                  className="rounded-xl border border-amber-300/40 px-4 py-2.5 text-sm font-bold text-amber-100 disabled:opacity-40"
+                >
+                  Kiber-İnsident Hesabatını Yüklə
+                </button>
                 <button
                   type="button"
                   onClick={() => {

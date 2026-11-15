@@ -1,0 +1,218 @@
+import { useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { GraduationCap } from "lucide-react";
+import { RASHAD_ID, quizQuestions } from "../data/mockData.ts";
+import { getBreach, hourlyProfile } from "../lib/behavior.ts";
+import { useSoc } from "../context/SocContext.tsx";
+import { Panel } from "./ui.tsx";
+import { cn, fullName, workHours } from "../lib/utils.ts";
+
+export function InsiderTracker() {
+  const { employees, simulationLocked, applyTraining } = useSoc();
+  const [employeeId, setEmployeeId] = useState(RASHAD_ID);
+  const [showBreach, setShowBreach] = useState(true);
+  const [step, setStep] = useState(0);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
+  const [correctCount, setCorrectCount] = useState(0);
+
+  const employee = employees.find((item) => item.id === employeeId) ?? employees[0];
+  const story = getBreach(employee.id);
+  const points = useMemo(() => hourlyProfile(employee, showBreach && Boolean(story)), [employee, showBreach, story]);
+
+  useEffect(() => {
+    if (!simulationLocked) return;
+    setEmployeeId(RASHAD_ID);
+    setShowBreach(true);
+  }, [simulationLocked]);
+
+  useEffect(() => {
+    setStep(0);
+    setPicked(null);
+    setFinished(false);
+    setCorrectCount(0);
+  }, [employeeId]);
+
+  const question = quizQuestions[step];
+  const pickedOption = question.options.find((option) => option.id === picked);
+
+  function selectEmployee(id: string) {
+    setEmployeeId(id);
+    setShowBreach(Boolean(getBreach(id)));
+  }
+
+  function advance() {
+    if (!pickedOption) return;
+    const nextCorrect = correctCount + (pickedOption.correct ? 1 : 0);
+    if (step === quizQuestions.length - 1) {
+      setCorrectCount(nextCorrect);
+      setFinished(true);
+      applyTraining(employee.id, nextCorrect);
+      return;
+    }
+    setCorrectCount(nextCorrect);
+    setPicked(null);
+    setStep((value) => value + 1);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs font-bold tracking-[0.18em] text-cyan-300">3-CÜ MÜDAFİƏ XƏTTİ</p>
+        <h2 className="mt-1 text-xl font-bold text-white">Daxili davranış izləyicisi və kiber-sayıqlıq təlimi</h2>
+        <p className="mt-1 max-w-3xl text-sm text-slate-400">
+          Hər əməkdaşın normal iş ritmi ilə şübhəli fəaliyyət müqayisə olunur. Sayıqlığı artırmaq üçün üç suallıq mini test balı yeniləyir.
+        </p>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+        <Panel>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <label className="min-w-[240px] flex-1 text-sm">
+              <span className="mb-1.5 block text-slate-400">Əməkdaş profili</span>
+              <select
+                value={employee.id}
+                onChange={(event) => selectEmployee(event.target.value)}
+                className="w-full rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2.5 outline-none"
+              >
+                {employees.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {fullName(item)} — {item.position}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowBreach((value) => !value)}
+              disabled={!story}
+              className="rounded-xl border border-[#1E293B] px-3 py-2.5 text-xs font-semibold text-slate-200 disabled:opacity-40"
+            >
+              {showBreach ? "Şübhəli aktivlik açıqdır" : "Şübhəli aktivliyi göstər"}
+            </button>
+          </div>
+          <div className="mb-3 text-xs text-slate-400">
+            {fullName(employee)} · {employee.department} · növbə {workHours(employee)} · norma {employee.avgDailyDownloads} fayl/gün
+          </div>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 680, height: 280 }}>
+              <BarChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke="#1E293B" vertical={false} />
+                <XAxis dataKey="hour" interval={2} stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 12 }}
+                  formatter={(value, name, item) => {
+                    const payload = item.payload as { fakt?: number; norma?: number };
+                    if (name === "Qeydə alınan") {
+                      return [`${(payload.fakt ?? Number(value)).toLocaleString("az-AZ")} fayl`, "Qeydə alınan"];
+                    }
+                    return [`${Number(payload.norma ?? value).toLocaleString("az-AZ")} fayl`, "Normal temp"];
+                  }}
+                />
+                <Bar dataKey="norma" name="Normal temp" fill="#334155" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="shown" name="Qeydə alınan" radius={[3, 3, 0, 0]}>
+                  {points.map((point) => (
+                    <Cell key={point.hour} fill={point.breach ? "#EF4444" : "#06B6D4"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {showBreach && story ? (
+            <p className="mt-2 text-xs text-slate-500">Qırmızı sütun şkala tavanında göstərilir. Həqiqi say sağ paneldədir.</p>
+          ) : null}
+        </Panel>
+
+        <Panel className={cn(simulationLocked && employee.id === RASHAD_ID && "border-red-400/50")}>
+          {story && showBreach ? (
+            <div>
+              <div className="text-[11px] font-bold tracking-[0.16em] text-red-300">ANOMALİYA</div>
+              <h3 className="mt-2 text-lg font-bold text-white">{story.title}</h3>
+              <div className="mt-4 font-mono text-4xl font-semibold text-red-200">{story.files.toLocaleString("az-AZ")}</div>
+              <p className="text-xs text-slate-400">fayl · norma {employee.avgDailyDownloads}/gün</p>
+              <p className="mt-3 text-sm leading-6 text-slate-300">{story.detail}</p>
+              <p className="mt-3 text-sm font-semibold text-amber-200">
+                Sapma: təxminən {Math.round(story.files / employee.avgDailyDownloads).toLocaleString("az-AZ")} dəfə norma.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="text-[11px] font-bold tracking-[0.16em] text-emerald-300">NORMAL RİTM</div>
+              <h3 className="mt-2 text-lg font-bold text-white">Kritik sapma yoxdur</h3>
+              <p className="mt-3 text-sm leading-6 text-slate-300">
+                {fullName(employee)} üçün son profil şəxsi bazasına uyğundur. Gündəlik orta yükləmə {employee.avgDailyDownloads} fayldır və iş saatı {workHours(employee)} aralığındadır.
+              </p>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      <Panel>
+        <div className="mb-4 flex items-center gap-2">
+          <GraduationCap className="h-4 w-4 text-cyan-300" />
+          <h3 className="text-sm font-semibold text-white">Mini kiber-test · {fullName(employee)}</h3>
+        </div>
+        {finished ? (
+          <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4">
+            <div className="font-mono text-3xl text-cyan-100">{correctCount}/3</div>
+            <p className="mt-2 text-sm text-slate-200">
+              {correctCount >= 2
+                ? "Düzgün reaksiyalar sayıqlıq balına yazıldı."
+                : "Zəif nəticə. Təzyiq, dipfeyk və gecə ixracı qaydalarını bir daha nəzərdən keçirin."}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setFinished(false);
+                setStep(0);
+                setPicked(null);
+                setCorrectCount(0);
+              }}
+              className="mt-4 rounded-xl border border-cyan-300/40 px-3 py-2 text-xs font-bold text-cyan-100"
+            >
+              Testi yenidən başlat
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-3 text-xs text-slate-500">Sual {step + 1} / 3</div>
+            <h4 className="text-base font-semibold leading-7 text-white">{question.prompt}</h4>
+            <div className="mt-4 space-y-2">
+              {question.options.map((option) => {
+                const selected = picked === option.id;
+                const revealed = picked !== null;
+                const good = revealed && option.correct;
+                const bad = revealed && selected && !option.correct;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setPicked(option.id)}
+                    className={cn(
+                      "block w-full rounded-xl border px-3 py-3 text-left text-sm",
+                      good && "border-emerald-400/50 bg-emerald-400/10",
+                      bad && "border-red-400/50 bg-red-400/10",
+                      !good && !bad && "border-[#1E293B] bg-[#060B14] hover:border-cyan-400/30",
+                    )}
+                  >
+                    {option.text}
+                  </button>
+                );
+              })}
+            </div>
+            {pickedOption ? <p className="mt-3 text-sm leading-6 text-slate-300">{question.explain}</p> : null}
+            <button
+              type="button"
+              disabled={!picked}
+              onClick={advance}
+              className="mt-4 rounded-xl bg-cyan-400 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-40"
+            >
+              {step === quizQuestions.length - 1 ? "Nəticəni yaz" : "Növbəti sual"}
+            </button>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}

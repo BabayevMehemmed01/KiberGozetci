@@ -1,0 +1,78 @@
+import { AudioWaveform, BrainCircuit, Mail, Radar, Shield, Siren, SquareActivity } from "lucide-react";
+import type { AppTab } from "../types.ts";
+import { useSoc } from "../context/SocContext.tsx";
+import { cn } from "../lib/utils.ts";
+
+const TABS: { id: AppTab; label: string; caption: string; icon: typeof Mail }[] = [
+  { id: "overview", label: "Ümumi baxış", caption: "Vahid panel", icon: SquareActivity },
+  { id: "phishing", label: "Fişinq analizi", caption: "1-ci müdafiə xətti", icon: Mail },
+  { id: "deepfake", label: "Dipfeyk detektoru", caption: "2-ci müdafiə xətti", icon: AudioWaveform },
+  { id: "insider", label: "Daxili izləyici", caption: "3-cü müdafiə xətti", icon: Radar },
+];
+
+export function Header() {
+  const { tab, setTab, openKillChain } = useSoc();
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-[#1E293B]/80 bg-[#060B14]/85 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-3">
+            <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_28px_rgba(6,182,212,0.28)]">
+              <Shield className="h-7 w-7 text-cyan-300" strokeWidth={1.6} />
+              <BrainCircuit className="absolute h-3.5 w-3.5 text-cyan-50" strokeWidth={2.2} />
+            </div>
+            <div>
+              <h1 className="text-lg font-extrabold tracking-tight text-white">KiberGözətçi</h1>
+              <p className="text-[11px] text-slate-400">İnsan faktoru · Dipfeyk · Daxili təhdid</p>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            </span>
+            Sistem Aktivdir • 3 Qatlı AI Qoruma
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={openKillChain}
+          className="kill-btn inline-flex items-center gap-2 rounded-xl border border-red-300/40 bg-gradient-to-r from-red-600 via-rose-500 to-red-500 px-3 py-2.5 text-left text-[11px] font-extrabold tracking-wide text-white sm:text-xs"
+        >
+          <Siren className="h-4 w-4 shrink-0" />
+          ZƏNCİRVARİ HÜCUM SİMULYASİYASI
+        </button>
+      </div>
+      <div className="mx-auto max-w-[1480px] px-4 pb-3 md:px-6">
+        <div role="tablist" aria-label="Əsas bölmələr" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {TABS.map((item) => {
+            const Icon = item.icon;
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(item.id)}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
+                  active
+                    ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-100 shadow-[0_0_24px_rgba(6,182,212,0.12)]"
+                    : "border-[#1E293B] bg-[#0F172A]/70 text-slate-300 hover:border-cyan-400/30",
+                )}
+              >
+                <Icon className={cn("h-4 w-4 shrink-0", active ? "text-cyan-300" : "text-slate-500")} />
+                <span>
+                  <span className="block text-sm font-semibold">{item.label}</span>
+                  <span className="block text-[11px] text-slate-500">{item.caption}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </header>
+  );
+}

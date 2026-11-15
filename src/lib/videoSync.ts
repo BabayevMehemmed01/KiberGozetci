@@ -51,13 +51,19 @@ function seek(video: HTMLVideoElement, time: number): Promise<void> {
   });
 }
 
+export interface VideoForensics {
+  lipSync: number;
+  smoothness: number;
+  flicker: number;
+}
+
 export async function estimateLipSync(
   file: File,
   samples: Float32Array | null,
   sampleRate: number,
-): Promise<number | null> {
-  const videoFile = file.type.startsWith("video/") || /\.mp4$/i.test(file.name);
-  if (!videoFile || !samples || sampleRate <= 0) return null;
+): Promise<VideoForensics | null> {
+  const videoFile = file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name);
+  if (!videoFile) return null;
 
   const url = URL.createObjectURL(file);
   const video = document.createElement("video");
@@ -86,9 +92,11 @@ export async function estimateLipSync(
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return null;
 
-    const frames = 6;
+    const frames = 8;
     const motions: number[] = [];
     const energies: number[] = [];
+    const lumas: number[] = [];
+    const gradients: number[] = [];
     let previous: Uint8ClampedArray | null = null;
 
     for (let index = 0; index < frames; index += 1) {
@@ -100,20 +108,43 @@ export async function estimateLipSync(
       const cropH = Math.max(1, video.videoHeight * 0.28);
       context.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let luma = 0;
+      let gradient = 0;
+      let gradientCount = 0;
+      const width = canvas.width;
+      for (let pixel = 0; pixel < pixels.length; pixel += 4) {
+        const tone = pixels[pixel] * 0.3 + pixels[pixel + 1] * 0.59 + pixels[pixel + 2] * 0.11;
+        luma += tone;
+        const column = (pixel / 4) % width;
+        if (column < width - 1) {
+          const right = pixels[pixel + 4] * 0.3 + pixels[pixel + 5] * 0.59 + pixels[pixel + 6] * 0.11;
+          gradient += Math.abs(tone - right);
+          gradientCount += 1;
+        }
+      }
+      lumas.push(luma / (pixels.length / 4));
+      gradients.push(gradientCount ? gradient / gradientCount : 0);
       if (previous) {
         let diff = 0;
         for (let pixel = 0; pixel < pixels.length; pixel += 4) {
           diff += Math.abs(pixels[pixel] - previous[pixel]);
         }
         motions.push(diff / (pixels.length / 4));
-        energies.push(windowEnergy(samples, sampleRate, time));
+        energies.push(samples && sampleRate > 0 ? windowEnergy(samples, sampleRate, time) : diff / (pixels.length / 4));
       }
       previous = pixels;
     }
 
-    const score = correlation(motions, energies);
-    if (score <= 0) return Math.round(clamp((score + 0.2) * 80));
-    return Math.round(clamp(20 + score * 90));
+    const sync = samples && sampleRate > 0 ? correlation(motions, energies) : correlation(motions, energies.map((_, index) => lumas[index + 1] ?? 0));
+    const lipSync = sync <= 0 ? Math.round(clamp((sync + 0.35) * 70)) : Math.round(clamp(18 + sync * 82));
+    const meanGradient = gradients.reduce((sum, value) => sum + value, 0) / (gradients.length || 1);
+    const smoothness = Math.round(clamp(((22 - meanGradient) / 22) * 100));
+    let flickerRaw = 0;
+    for (let index = 2; index < lumas.length; index += 1) {
+      flickerRaw += Math.abs(lumas[index] - 2 * lumas[index - 1] + lumas[index - 2]);
+    }
+    const flicker = Math.round(clamp((flickerRaw / Math.max(1, lumas.length - 2)) * 8));
+    return { lipSync, smoothness, flicker };
   } catch {
     return null;
   } finally {

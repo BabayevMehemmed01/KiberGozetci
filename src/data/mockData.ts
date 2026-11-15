@@ -351,26 +351,42 @@ export const phishingTemplates: PhishingTemplate[] = [
     text: "Hörmətli həmkarlar,\n\nSabah saat 11:00-da iclas zalında rüblük maliyyə hesabatı müzakirə olunacaq. Materiallar daxili portala yerləşdirilib. İştirakınız xahiş olunur.\n\nHörmətlə,\nNigar Məmmədova\nMaliyyə Direktoru",
     url: "https://portal.sirket.az/hesabatlar/2026-q3",
   },
+  {
+    id: "ceo-en",
+    title: "CEO Fraud — EN",
+    description: "İngilis dilində təcili köçürmə",
+    tone: "tehlukeli",
+    text: "Hi Rashad,\n\nThis is urgent. I am in a board meeting and need you to wire transfer $24,000 immediately. Do not tell anyone. Verify now. Card for the vendor: 4242 4242 4242 4242. Password can wait.",
+    url: "http://secure-wire-update.xyz/verify-now",
+  },
+  {
+    id: "bank-ru",
+    title: "Bank Təhlükəsizlik — RU",
+    description: "Rus dilində hesab blokajı",
+    tone: "tehlukeli",
+    text: "Уважаемый клиент!\n\nВаш счет заблокирован. Срочно подтвердите личность и выполните перевод. Код подтверждения: 849221. В противном случае доступ будет закрыт немедленно!!!",
+    url: "http://bank-bezopasnost.click/kod",
+  },
 ];
 
 export const voiceSamples: VoiceSample[] = [
   {
     id: "boss",
-    fileName: "rehber_tecili_kocurme_deepfake.wav",
+    fileName: "rehber_tecili_kocurme_deepfake.mp3",
     title: "Rəhbər — təcili köçürmə",
     description: "Sintezləşdirilmiş süni səs tezlikləri",
     scene: "Səs mesajı",
   },
   {
     id: "report",
-    fileName: "maliyye_hesabat_heqiqi.wav",
+    fileName: "maliyye_hesabat_heqiqi.ogg",
     title: "Maliyyə hesabatı",
     description: "Təbii səs modulyasiyası",
     scene: "İclas qeydi",
   },
   {
     id: "otp",
-    fileName: "namelum_otp_telebi_deepfake.wav",
+    fileName: "namelum_otp_telebi_deepfake.mp3",
     title: "Naməlum — OTP tələbi",
     description: "Süni robotik harmonikalar",
     scene: "Zəng yazısı",
@@ -385,14 +401,28 @@ export interface QuizOption {
 
 export interface QuizQuestion {
   id: string;
+  track: "maliyye" | "it" | "diger";
   prompt: string;
   options: QuizOption[];
   explain: string;
 }
 
+export function quizTrack(department: string): QuizQuestion["track"] {
+  const folded = department.toLocaleLowerCase("az-AZ");
+  if (folded.includes("maliyyə") || folded.includes("maliyye")) return "maliyye";
+  if (folded.includes("texnolog") || folded.includes("informasiya")) return "it";
+  return "diger";
+}
+
+export function questionsFor(department: string): QuizQuestion[] {
+  const track = quizTrack(department);
+  return quizQuestions.filter((question) => question.track === track);
+}
+
 export const quizQuestions: QuizQuestion[] = [
   {
-    id: "q1",
+    id: "fin-1",
+    track: "maliyye",
     prompt:
       "Maliyyə direktorunun adından gələn mesajda «təcili köçürmə et, heç kimə demə» yazılır və tanış olmayan keçid var. Ən düzgün addım hansıdır?",
     options: [
@@ -404,34 +434,94 @@ export const quizQuestions: QuizQuestion[] = [
       },
       { id: "c", text: "Keçidi açmaq, amma şifrəni yazmamaq", correct: false },
     ],
-    explain:
-      "Tələskənlik, gizlilik təzyiqi və kənar keçid birlikdə fişinq əlamətidir. Ödəniş yalnız təsdiqlənmiş daxili kanalla aparılır.",
+    explain: "Tələskənlik, gizlilik təzyiqi və kənar keçid birlikdə fişinq əlamətidir. Ödəniş yalnız təsdiqlənmiş daxili kanalla aparılır.",
   },
   {
-    id: "q2",
-    prompt: "Tanış səslə zəng edən şəxs birdəfəlik SMS kodunu sizdən istəyir. Bunu necə qiymətləndirirsiniz?",
+    id: "fin-2",
+    track: "maliyye",
+    prompt: "Təchizatçı tanış e-poçtdan yazır və hesab-fakturanın IBAN-ını «bank yeniləməsi» adı ilə dəyişdirməyinizi istəyir. Nə edirsiniz?",
     options: [
-      { id: "a", text: "Səs tanışdırsa, kodu demək olar", correct: false },
+      { id: "a", text: "Köhnə ödəniş şablonunu dərhal yeni IBAN ilə əvəz etmək", correct: false },
+      { id: "b", text: "Ödənişi dayandırmaq və IBAN-ı müqavilədəki rəsmi kanalla yoxlamaq", correct: true },
+      { id: "c", text: "Kiçik məbləğdə sınaq köçürməsi edib nəticəyə baxmaq", correct: false },
+    ],
+    explain: "IBAN dəyişikliyi klassik ödəniş yönləndirmə hücumudur. Yeni hesab yalnız müqavilə və tanınmış telefonla təsdiqlənir.",
+  },
+  {
+    id: "fin-3",
+    track: "maliyye",
+    prompt: "Tanış səs maliyyə əməliyyatı üçün birdəfəlik bank kodunu sizdən istəyir. Bunu necə qiymətləndirirsiniz?",
+    options: [
+      { id: "a", text: "Səs rəhbərə bənzəyirsə, kodu demək olar", correct: false },
       { id: "b", text: "Bu, dipfeyk ola bilər. Birdəfəlik kod heç vaxt səslə paylaşılmır", correct: true },
       { id: "c", text: "Kodu yalnız bir dəfə və qısa şəkildə demək olar", correct: false },
     ],
-    explain:
-      "Süni səs real insanı inandırıcı təqlid edə bilir. Birdəfəlik kod yalnız sizin ekranınızdakı rəsmi əməliyyata aiddir.",
+    explain: "Süni səs real insanı inandırıcı təqlid edə bilir. Birdəfəlik kod yalnız sizin ekranınızdakı rəsmi əməliyyata aiddir.",
   },
   {
-    id: "q3",
-    prompt:
-      "Bir iş hesabı gecə 02:30-da, gündəlik 15 fayl limiti olan əməkdaşın adından 14.500 müştəri qeydini ixrac edir. İlk reaksiya nədir?",
+    id: "it-1",
+    track: "it",
+    prompt: "Xarici ünvanlı bilet administrator şifrəsinin «təcili sıfırlanmasını» və keçiddən daxil olmanızı istəyir. İlk addım nədir?",
+    options: [
+      { id: "a", text: "Keçidi açıb inzibatçı şifrəsini yeniləmək", correct: false },
+      { id: "b", text: "Bileti saxta hesab etmək, keçidə girməmək və daxili tiket sistemindən yoxlamaq", correct: true },
+      { id: "c", text: "Şifrəni həmkarla çatda paylaşmaq", correct: false },
+    ],
+    explain: "İnzibatçı şifrəsi heç vaxt e-poçt keçidi ilə sıfırlanmır. Sorğu yalnız daxili tiket və tanınmış identifikasiya ilə qəbul edilir.",
+  },
+  {
+    id: "it-2",
+    track: "it",
+    prompt: "Masaya naməlum USB yaddaş qoyulub və üzərində «şəbəkə yeniləməsi» yazılıb. Necə davranırsınız?",
+    options: [
+      { id: "a", text: "İş kompüterinə taxıb içindəki faylı işə salmaq", correct: false },
+      { id: "b", text: "Cihazı qoşmamaq, təhlükəsizlik komandasına təhvil vermək", correct: true },
+      { id: "c", text: "Əvvəlcə şəxsi noutbukda açmaq", correct: false },
+    ],
+    explain: "Naməlum daşıyıcı zərərli proqramın ən köhnə yoludur. Heç bir iş və ya şəxsi kompüterə taxılmır.",
+  },
+  {
+    id: "it-3",
+    track: "it",
+    prompt: "Söhbət pəncərəsində rəhbər adından VPN istifadəçi adı və birdəfəlik kod istənilir. Düzgün reaksiya hansıdır?",
+    options: [
+      { id: "a", text: "Kodun müddəti bitməsin deyə dərhal göndərmək", correct: false },
+      { id: "b", text: "Kodu paylaşmamaq, sessiyanı bağlamaq və müraciəti rəsmi kanaldan təsdiqləmək", correct: true },
+      { id: "c", text: "Yalnız istifadəçi adını göndərib kodu gizlətmək", correct: false },
+    ],
+    explain: "VPN məlumatı və birdəfəlik kod identifikasiyanın açarıdır. Çat yazısı, hətta tanış addan gəlsə belə, sübut deyil.",
+  },
+  {
+    id: "ops-1",
+    track: "diger",
+    prompt: "Kuryer xidmətindən gələn SMS bağlamanı itirməmək üçün qısa keçidə keçməyinizi və FİN kod yazmağınızı istəyir. Nə edirsiniz?",
+    options: [
+      { id: "a", text: "Keçidi açıb FİN kodu daxil etmək", correct: false },
+      { id: "b", text: "Keçidə girməmək və çatdırılmanı rəsmi tətbiq və ya tanınmış nömrə ilə yoxlamaq", correct: true },
+      { id: "c", text: "Keçidi həmkarlara yönləndirmək", correct: false },
+    ],
+    explain: "Saxta kuryer keçidi FİN və kart məlumatını oğurlamaq üçün qurulur. İzləmə yalnız rəsmi tətbiqdə aparılır.",
+  },
+  {
+    id: "ops-2",
+    track: "diger",
+    prompt: "Bir iş hesabı gecə 02:30-da gündəlik limitdən qat-qat çox müştəri qeydini ixrac edir. İlk reaksiya nədir?",
     options: [
       { id: "a", text: "Səhər növbəsinə qədər gözləmək", correct: false },
-      {
-        id: "b",
-        text: "Hesabı dərhal dondurmaq, ixracı dayandırmaq və hadisəni jurnala salmaq",
-        correct: true,
-      },
+      { id: "b", text: "Hesabı dərhal dondurmaq, ixracı dayandırmaq və hadisəni jurnala salmaq", correct: true },
       { id: "c", text: "Faylları əlavə nüsxə üçün başqa qovluğa köçürmək", correct: false },
     ],
-    explain:
-      "Bu, normal davranışdan kəskin sapmadır. Dondurma sızmanı saniyələr içində kəsir, jurnal isə üç müdafiə qatını bir-birinə bağlayır.",
+    explain: "Bu, normal davranışdan kəskin sapmadır. Dondurma sızmanı saniyələr içində kəsir, jurnal isə üç müdafiə qatını bir-birinə bağlayır.",
+  },
+  {
+    id: "ops-3",
+    track: "diger",
+    prompt: "Ümumi poçt qutusuna «anbar siyahısı» adlı qoşma gəlir və makrosu aktiv etmədən açılmadığı yazılır. Necə yanaşırsınız?",
+    options: [
+      { id: "a", text: "Makrosu aktiv edib cədvələ baxmaq", correct: false },
+      { id: "b", text: "Qoşmanı açmamaq, göndərəni təsdiqləmək və şübhəli faylı bildirmək", correct: true },
+      { id: "c", text: "Faylı şəxsi poçta ötürüb orada açmaq", correct: false },
+    ],
+    explain: "Makros istəyən gözlənilməz qoşma zərərli proqram daşıyıcısıdır. Fayl yalnız göndərən təsdiqləndikdən və təhlükəsiz mühitdə açılır.",
   },
 ];

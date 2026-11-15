@@ -145,6 +145,7 @@ const files = [
 ];
 
 for (const [name, samples] of files) {
+  if (!String(name).endsWith(".wav")) continue;
   const target = join(outputDir, name);
   writeFileSync(target, encodeWav(samples, SAMPLE_RATE));
   console.log(`${name}: ${(samples.length / SAMPLE_RATE).toFixed(2)}s`);

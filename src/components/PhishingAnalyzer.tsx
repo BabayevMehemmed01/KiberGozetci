@@ -50,7 +50,7 @@ export function PhishingAnalyzer() {
         <p className="text-xs font-bold tracking-[0.18em] text-cyan-300">1-Cİ MÜDAFİƏ XƏTTİ</p>
         <h2 className="mt-1 text-xl font-bold text-white">Fişinq və sosial mühəndislik analizatoru</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
-          Mətn və keçid yerli alqoritmlə yoxlanılır. Tələskənlik sözləri, saxta domen əlamətləri və məlumat oğurluğu dili qırmızı ilə işarələnir.
+          Mətn və keçid yerli alqoritmlə yoxlanılır. Azərbaycan, ingilis, rus və türk dillərindəki tələskənlik sözləri, saxta domenlər, kart və IBAN izləri qırmızı ilə işarələnir.
         </p>
       </div>
 

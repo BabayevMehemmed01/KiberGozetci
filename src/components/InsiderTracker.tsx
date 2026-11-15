@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { GraduationCap } from "lucide-react";
-import { RASHAD_ID, quizQuestions } from "../data/mockData.ts";
-import { getBreach, hourlyProfile } from "../lib/behavior.ts";
+import { questionsFor } from "../data/mockData.ts";
+import { getBreach, hourlyProfile, simulationBreach } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { Panel } from "./ui.tsx";
 import { cn, fullName, workHours } from "../lib/utils.ts";
 
 export function InsiderTracker() {
-  const { employees, simulationLocked, applyTraining } = useSoc();
-  const [employeeId, setEmployeeId] = useState(RASHAD_ID);
+  const { employees, simulationLocked, applyTraining, lockedEmployeeId } = useSoc();
+  const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
   const [showBreach, setShowBreach] = useState(true);
   const [step, setStep] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
@@ -17,14 +17,15 @@ export function InsiderTracker() {
   const [correctCount, setCorrectCount] = useState(0);
 
   const employee = employees.find((item) => item.id === employeeId) ?? employees[0];
-  const story = getBreach(employee.id);
-  const points = useMemo(() => hourlyProfile(employee, showBreach && Boolean(story)), [employee, showBreach, story]);
+  const story = simulationLocked && employee.id === lockedEmployeeId ? simulationBreach(employee) : getBreach(employee.id);
+  const points = useMemo(() => hourlyProfile(employee, showBreach && Boolean(story), story), [employee, showBreach, story]);
+  const questions = useMemo(() => questionsFor(employee.department), [employee.department]);
 
   useEffect(() => {
-    if (!simulationLocked) return;
-    setEmployeeId(RASHAD_ID);
+    if (!simulationLocked || !lockedEmployeeId) return;
+    setEmployeeId(lockedEmployeeId);
     setShowBreach(true);
-  }, [simulationLocked]);
+  }, [simulationLocked, lockedEmployeeId]);
 
   useEffect(() => {
     setStep(0);
@@ -33,7 +34,7 @@ export function InsiderTracker() {
     setCorrectCount(0);
   }, [employeeId]);
 
-  const question = quizQuestions[step];
+  const question = questions[Math.min(step, questions.length - 1)];
   const pickedOption = question.options.find((option) => option.id === picked);
 
   function selectEmployee(id: string) {
@@ -44,7 +45,7 @@ export function InsiderTracker() {
   function advance() {
     if (!pickedOption) return;
     const nextCorrect = correctCount + (pickedOption.correct ? 1 : 0);
-    if (step === quizQuestions.length - 1) {
+    if (step === questions.length - 1) {
       setCorrectCount(nextCorrect);
       setFinished(true);
       applyTraining(employee.id, nextCorrect);
@@ -124,7 +125,7 @@ export function InsiderTracker() {
           ) : null}
         </Panel>
 
-        <Panel className={cn(simulationLocked && employee.id === RASHAD_ID && "border-red-400/50")}>
+        <Panel className={cn(simulationLocked && employee.id === lockedEmployeeId && "border-red-400/50")}>
           {story && showBreach ? (
             <div>
               <div className="text-[11px] font-bold tracking-[0.16em] text-red-300">ANOMALİYA</div>
@@ -152,6 +153,9 @@ export function InsiderTracker() {
         <div className="mb-4 flex items-center gap-2">
           <GraduationCap className="h-4 w-4 text-cyan-300" />
           <h3 className="text-sm font-semibold text-white">Mini kiber-test · {fullName(employee)}</h3>
+          <span className="ml-auto text-[11px] text-slate-500">
+            {question.track === "maliyye" ? "Maliyyə sual bankı" : question.track === "it" ? "İT sual bankı" : "Logistika və digər şöbələr"}
+          </span>
         </div>
         {finished ? (
           <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4">
@@ -208,7 +212,7 @@ export function InsiderTracker() {
               onClick={advance}
               className="mt-4 rounded-xl bg-cyan-400 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-40"
             >
-              {step === quizQuestions.length - 1 ? "Nəticəni yaz" : "Növbəti sual"}
+              {step === questions.length - 1 ? "Nəticəni yaz" : "Növbəti sual"}
             </button>
           </div>
         )}

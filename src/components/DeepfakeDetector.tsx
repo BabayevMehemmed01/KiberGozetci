@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Pause, Play, Upload } from "lucide-react";
+import { Download, Mic, Pause, Play, Upload } from "lucide-react";
 import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
 import { decodeToMono } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
-import { estimateLipSync } from "../lib/videoSync.ts";
+import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
 import { Meter, Panel } from "./ui.tsx";
@@ -19,14 +19,18 @@ export function DeepfakeDetector() {
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
   const [samples, setSamples] = useState<Float32Array | null>(null);
   const [report, setReport] = useState<AcousticReport | null>(null);
-  const [lipSync, setLipSync] = useState<number | null>(null);
+  const [video, setVideo] = useState<VideoForensics | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
   const [loading, setLoading] = useState(false);
   const [label, setLabel] = useState("");
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [loggedLabel, setLoggedLabel] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
 
   function ensureGraph() {
     if (!contextRef.current) contextRef.current = new AudioContext();
@@ -74,34 +78,41 @@ export function DeepfakeDetector() {
     setPlaying(true);
   }
 
-  useEffect(() => () => stopPlayback(), []);
+  useEffect(
+    () => () => {
+      stopPlayback();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
 
   async function inspect(data: ArrayBuffer, nextLabel: string, file?: File) {
     setLoading(true);
     setError("");
     setReport(null);
-    setLipSync(null);
+    setVideo(null);
+    const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name)));
     try {
       const context = ensureGraph();
       const decoded = await decodeToMono(context, data);
       const limit = Math.min(decoded.samples.length, decoded.sampleRate * 12);
       const slice = decoded.samples.subarray(0, limit);
       const nextReport = analyzePcm(slice, decoded.sampleRate);
-      const lip = file ? await estimateLipSync(file, slice, decoded.sampleRate) : null;
+      const lip = videoFile && file ? await estimateLipSync(file, slice, decoded.sampleRate) : null;
       setSamples(slice);
       setBuffer(decoded.buffer);
       setReport(nextReport);
-      setLipSync(lip);
+      setVideo(lip);
       setLabel(nextLabel);
       play(decoded.buffer);
     } catch {
-      if (file && (file.type.startsWith("video/") || /\.mp4$/i.test(file.name))) {
+      if (videoFile && file) {
         const lip = await estimateLipSync(file, null, 0);
-        setLipSync(lip);
+        setVideo(lip);
         setLabel(nextLabel);
-        setError("Video konteynerinin səs izi brauzerdə açılmadı. Tam spektral analiz üçün WAV və ya MP3 seçin.");
+        setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
       } else {
-        setError("Bu faylın səs izi oxunmadı. WAV və ya MP3 formatında yenidən cəhd edin.");
+        setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG və ya MP4 formatında yenidən cəhd edin.");
       }
     } finally {
       setLoading(false);
@@ -123,13 +134,54 @@ export function DeepfakeDetector() {
   }
 
   async function loadFile(file: File) {
-    const allowed = /\.(wav|mp3|mp4)$/i.test(file.name) || file.type.startsWith("audio/") || file.type.startsWith("video/");
+    const allowed = /\.(wav|mp3|ogg|mp4|webm)$/i.test(file.name) || file.type.startsWith("audio/") || file.type.startsWith("video/");
     if (!allowed) {
-      setError("Yalnız WAV, MP3 və MP4 faylları qəbul edilir.");
+      setError("Yalnız WAV, MP3, OGG, MP4 və WEBM faylları qəbul edilir.");
       return;
     }
     ensureGraph();
     await inspect(await file.arrayBuffer(), file.name, file);
+  }
+
+  async function toggleMic() {
+    if (recording) {
+      setRecording(false);
+      recorderRef.current?.stop();
+      return;
+    }
+    const context = ensureGraph();
+    stopPlayback();
+    setPlaying(false);
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      streamRef.current = stream;
+      const source = context.createMediaStreamSource(stream);
+      const node = context.createAnalyser();
+      node.fftSize = 2048;
+      node.smoothingTimeConstant = 0.72;
+      source.connect(node);
+      setMicAnalyser(node);
+      const chunks: Blob[] = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        void blob.arrayBuffer().then((data) => inspect(data, "Canlı mikrofon yazısı"));
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setRecording(false);
+      setError("Mikrofona giriş icazəsi verilmədi və ya cihaz tapılmadı.");
+    }
   }
 
   const verdict = report ? verdictFor(report) : null;
@@ -182,6 +234,7 @@ export function DeepfakeDetector() {
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <Panel>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -204,13 +257,28 @@ export function DeepfakeDetector() {
             <div>
               <Upload className="mx-auto mb-3 h-7 w-7 text-cyan-300" />
               <div className="text-sm font-semibold text-slate-100">Faylı buraya sürükləyin</div>
-              <p className="mt-1 text-xs text-slate-500">WAV, MP3 və ya MP4. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
+              <p className="mt-1 text-xs text-slate-500">WAV, MP3, OGG və ya MP4. WEBM də qəbul edilir. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
             </div>
           </button>
+          <button
+            type="button"
+            onClick={() => void toggleMic()}
+            className={cn(
+              "grid min-h-44 place-items-center rounded-2xl border px-4 py-6 text-center sm:w-56",
+              recording ? "border-red-400/60 bg-red-500/10" : "border-[#1E293B] bg-[#060B14]",
+            )}
+          >
+            <div>
+              <Mic className={cn("mx-auto mb-3 h-7 w-7", recording ? "text-red-300" : "text-cyan-300")} />
+              <div className="text-sm font-semibold text-slate-100">{recording ? "Dayandır və Analiz Et" : "Canlı Mikrofonla Yoxla"}</div>
+              <p className="mt-1 text-xs text-slate-500">{recording ? "Yazı gedir, dalğa canlıdır" : "Brauzer mikrofonundan real səs"}</p>
+            </div>
+          </button>
+          </div>
           <input
             ref={fileRef}
             type="file"
-            accept=".wav,.mp3,.mp4,audio/*,video/mp4"
+            accept=".ogg,.mp3,.wav,.mp4,.webm,audio/*,video/*"
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -222,7 +290,7 @@ export function DeepfakeDetector() {
           {error ? <p className="mt-3 text-sm text-amber-200">{error}</p> : null}
           {label ? <p className="mt-3 text-xs text-slate-400">Aktiv fayl: {label}</p> : null}
           <div className="mt-4">
-            <SignalCanvas samples={samples} analyser={analyser} live={playing} />
+            <SignalCanvas samples={samples} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
           </div>
           <button
             type="button"
@@ -262,9 +330,9 @@ export function DeepfakeDetector() {
               <Meter label="Tezlik spektri anomaliyası" value={report.spectrumAnomaly} intent="risk" hint="Ton və ucalığın süni sabitliyi" />
               <Meter
                 label="Dodaq/səs uyğunluğu"
-                value={lipSync}
+                value={video ? video.lipSync : null}
                 intent="safe"
-                hint={lipSync === null ? "Video kadrı yoxdur — göstərici hesablanmayıb" : "Kadr hərəkəti ilə səs enerjisinin yerli uyğunluğu"}
+                hint={video ? `Kadr sinxronu ${video.lipSync}% · hamarlıq ${video.smoothness}% · titrəmə ${video.flicker}%` : "Video kadrı yoxdur — göstərici hesablanmayıb"}
               />
               <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                 <Metric label="Ton titrəməsi" value={report.metrics.pitchJitter.toFixed(3)} />
@@ -273,7 +341,7 @@ export function DeepfakeDetector() {
                 <Metric label="Amplituda dəyişkənliyi" value={report.metrics.amplitudeVariation.toFixed(2)} />
               </div>
               <ul className="space-y-2 text-sm text-slate-300">
-                {describe(report, lipSync).map((line) => (
+                {describe(report, video).map((line) => (
                   <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
                     {line}
                   </li>
@@ -307,22 +375,37 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function describe(report: AcousticReport, lip: number | null): string[] {
+function describe(report: AcousticReport, clip: VideoForensics | null): string[] {
   if (report.unreliable) return ["Faylda analiz üçün kifayət qədər səs enerjisi yoxdur."];
-  return [
+  const lines = [
     report.vocoder >= 70
-      ? "Harmoniklər robotik dərəcədə təmiz və sabitdir — vocoder izi güclüdür."
+      ? "Harmoniklər süni dərəcədə təmiz və sabitdir — sintez izi güclüdür."
       : "Harmonik quruluş insan danışığındakı təbii dağınıqlığa daha yaxındır.",
     report.breathNatural >= 60
-      ? "Danışıq arasında təbii nəfəs fasilələri ölçülüb."
+      ? "Danışıq arasında təbii nəfəs fasilələri və mikro-titrəmə ölçülüb."
       : "Təbii nəfəs fasilələri demək olar ki, yoxdur.",
     report.spectrumAnomaly >= 70
-      ? "Əsas ton və ucalıq süni dərəcədə kilidlənib."
-      : "Ton hündürlüyü və ucalıq yazı boyu dəyişir.",
-    lip === null
-      ? "Video kadrı yoxdur — dodaq və səs uyğunluğu hesablanmayıb."
-      : lip >= 65
-        ? "Kadr hərəkəti səs enerjisi ilə uyğun gedir."
-        : "Kadr hərəkəti ilə səs enerjisi arasında zəif uyğunluq var.",
+      ? "Tezlik spektrində kəskin kəsilmə və həddindən artıq sabit harmoniklər var."
+      : "Ton hündürlüyü və ucalıq yazı boyu təbii dəyişir.",
   ];
+  if (!clip) {
+    lines.push("Video kadrı yoxdur — dodaq və səs uyğunluğu hesablanmayıb.");
+    return lines;
+  }
+  lines.push(
+    clip.lipSync >= 65
+      ? "Kadr hərəkəti səs enerjisi ilə uyğun gedir."
+      : "Kadr hərəkəti ilə səs enerjisi arasında zəif uyğunluq var.",
+  );
+  lines.push(
+    clip.smoothness >= 68
+      ? "Üz bölgəsində piksel hamarlığı süni vizuala yaxındır."
+      : "Kadr piksellərində təbii detal və kənar dəyişkənliyi var.",
+  );
+  lines.push(
+    clip.flicker >= 45
+      ? "Kadrlar arasında rəng titrəməsi yüksəkdir."
+      : "Kadrlararası rəng titrəməsi mülayimdir.",
+  );
+  return lines;
 }

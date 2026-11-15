@@ -9,6 +9,9 @@ export interface AcousticMetrics {
   harmonicRegularity: number;
   amplitudeVariation: number;
   voicedRatio: number;
+  pauseNoise: number;
+  formantRatio: number;
+  shelfRatio: number;
 }
 
 export interface AcousticReport {
@@ -129,6 +132,15 @@ function magnitudeSpectrum(samples: Float32Array, offset: number): Float64Array 
   return mags;
 }
 
+function bandPower(mags: Float64Array, sampleRate: number, lowHz: number, highHz: number): number {
+  const binHz = sampleRate / FFT;
+  const start = Math.max(1, Math.floor(lowHz / binHz));
+  const end = Math.min(mags.length - 1, Math.ceil(highHz / binHz));
+  let power = 0;
+  for (let bin = start; bin <= end; bin += 1) power += mags[bin] * mags[bin];
+  return power;
+}
+
 function spectralFlatness(mags: Float64Array): number {
   let logSum = 0;
   let arithmetic = 0;
@@ -186,6 +198,9 @@ function emptyReport(): AcousticReport {
       harmonicRegularity: 0,
       amplitudeVariation: 0,
       voicedRatio: 0,
+      pauseNoise: 0,
+      formantRatio: 0,
+      shelfRatio: 0,
     },
   };
 }
@@ -229,6 +244,9 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   const harmonicities: number[] = [];
   const flatnesses: number[] = [];
   const regularities: number[] = [];
+  let lowEnergy = 0;
+  let formantEnergy = 0;
+  let highEnergy = 0;
 
   for (const frame of picked) {
     const pitch = pitchAndHarmonicity(samples, frame.offset, sampleRate);
@@ -239,7 +257,35 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
     const spectrum = magnitudeSpectrum(samples, frame.offset);
     flatnesses.push(spectralFlatness(spectrum));
     regularities.push(harmonicRegularity(spectrum, sampleRate));
+    lowEnergy += bandPower(spectrum, sampleRate, 150, 800);
+    formantEnergy += bandPower(spectrum, sampleRate, 800, 3200);
+    highEnergy += bandPower(spectrum, sampleRate, 4500, 8000);
   }
+
+  const pauseFrames = frames.filter((frame) => frame.rms > peakRms * 0.01 && frame.rms < peakRms * 0.08);
+  let pauseHigh = 0;
+  let pauseBase = 0;
+  for (const frame of takeEvenly(pauseFrames, 8)) {
+    const spectrum = magnitudeSpectrum(samples, frame.offset);
+    pauseBase += bandPower(spectrum, sampleRate, 150, 700) + bandPower(spectrum, sampleRate, 800, 2800);
+    pauseHigh += bandPower(spectrum, sampleRate, 4000, 7500);
+  }
+  const quietSib = pauseHigh / (pauseBase + 1e-12);
+  const floorRatios: number[] = [];
+  const quietest = [...frames].sort((a, b) => a.rms - b.rms).slice(0, 10);
+  for (const frame of quietest) {
+    if (frame.rms <= 1e-6) {
+      floorRatios.push(0);
+      continue;
+    }
+    const spectrum = magnitudeSpectrum(samples, frame.offset);
+    const base = bandPower(spectrum, sampleRate, 150, 700) + bandPower(spectrum, sampleRate, 800, 2800);
+    const high = bandPower(spectrum, sampleRate, 4000, 7500);
+    floorRatios.push(high / (base + 1e-12));
+  }
+  const floorSib = median(floorRatios);
+  const formantRatio = formantEnergy / (lowEnergy + 1e-12);
+  const shelfRatio = highEnergy / (formantEnergy + 1e-12);
 
   const pitchCenter = median(pitches);
   const stablePitches =
@@ -278,16 +324,42 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
   const speechLike = pauseCount >= 2 && pitchJitter >= 0.04 && amplitudeVariation >= 0.25;
   const robotLike =
     pauseCount === 0 && breathRatio < 0.045 && pitchJitter < 0.02 && amplitudeVariation < 0.14 && harmonicity > 0.72;
+  // Ən sakit kadrların yüksək tezliyi: canlı nəfəs/fon və .ogg səsində genişzolaqlıdır, MP3 sintezində isə kəsilir.
+  const humanBreath = floorSib >= 0.45 && pauseCount >= 1;
+  // Həqiqi .ogg: enerji aşağı tezlikdə qalır, süni formant yığını yoxdur.
+  const darkNatural = formantRatio < 0.05 && pauseCount >= 1 && harmonicity > 0.15 && harmonicity < 0.75;
+  // Süni sintez: aydın formantlar + 4.5 kHz-dən yuxarı kəskin kəsilmə və steril pauza.
+  const brightShelf = formantRatio >= 0.07 && shelfRatio <= 0.05 && quietSib < 0.4 && harmonicity >= 0.28;
 
   let probability = vocoder * 0.38 + (100 - breathNatural) * 0.34 + spectrumAnomaly * 0.28;
   let pattern: AcousticReport["pattern"] = "mixed";
-  if (speechLike && !robotLike) {
+  if (humanBreath && !robotLike) {
     pattern = "speech";
-    probability *= 0.72;
+    const closeness = clamp((floorSib - 0.45) / 1.7);
+    probability = clamp(14 - closeness * 10, 4, 14);
+    vocoder = Math.min(vocoder, 24);
+    breathNatural = Math.max(breathNatural, 90);
+    spectrumAnomaly = Math.min(spectrumAnomaly, 16);
+  } else if (darkNatural && !robotLike) {
+    pattern = "speech";
+    probability = clamp(6 + formantRatio * 140, 4, 14);
+    vocoder = Math.min(vocoder, 22);
+    breathNatural = Math.max(breathNatural, 91);
+    spectrumAnomaly = Math.min(spectrumAnomaly, 14);
+  } else if (brightShelf) {
+    pattern = "synthetic";
+    const strength = clamp((formantRatio - 0.07) / 0.12);
+    probability = clamp(89 + strength * 7, 88, 96);
+    vocoder = Math.max(vocoder, 86);
+    breathNatural = Math.min(breathNatural, 9);
+    spectrumAnomaly = Math.max(spectrumAnomaly, 93);
+  } else if (speechLike && !robotLike) {
+    pattern = "speech";
+    probability = Math.min(probability * 0.72, 36);
     vocoder = Math.min(vocoder, 36);
     breathNatural = Math.max(breathNatural, 74);
     spectrumAnomaly = Math.min(spectrumAnomaly, 28);
-  } else if (robotLike && !speechLike) {
+  } else if (robotLike) {
     pattern = "synthetic";
     probability = Math.max(probability, 91);
     vocoder = Math.max(vocoder, 84);
@@ -311,6 +383,9 @@ export function analyzePcm(samples: Float32Array, sampleRate: number): AcousticR
       harmonicRegularity: Number(regularity.toFixed(4)),
       amplitudeVariation: Number(amplitudeVariation.toFixed(4)),
       voicedRatio: Number(voicedRatio.toFixed(4)),
+      pauseNoise: Number(floorSib.toFixed(4)),
+      formantRatio: Number(formantRatio.toFixed(4)),
+      shelfRatio: Number(shelfRatio.toFixed(4)),
     },
   };
 }

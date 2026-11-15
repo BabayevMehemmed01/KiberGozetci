@@ -17,6 +17,9 @@ interface SocContextValue {
   simPhase: SimPhase;
   killToken: number;
   simulationLocked: boolean;
+  targetEmployeeId: string;
+  setTargetEmployeeId: (id: string) => void;
+  lockedEmployeeId: string | null;
   toasts: ToastMessage[];
   dismissToast: (id: string) => void;
   openKillChain: () => void;
@@ -43,11 +46,15 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const [simPhase, setSimPhase] = useState<SimPhase>("idle");
   const [killToken, setKillToken] = useState(0);
   const [simulationLocked, setSimulationLocked] = useState(false);
+  const [targetEmployeeId, setTargetEmployeeIdState] = useState(RASHAD_ID);
+  const [lockedEmployeeId, setLockedEmployeeId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const employeesRef = useRef(employees);
   const phaseRef = useRef<SimPhase>("idle");
   const snapshotRef = useRef<Employee | null>(null);
   const lockAppliedRef = useRef(false);
+  const targetRef = useRef(RASHAD_ID);
+  const lockedIdRef = useRef<string | null>(null);
   employeesRef.current = employees;
 
   const pushToast = useCallback((toast: Omit<ToastMessage, "id">) => {
@@ -108,6 +115,8 @@ export function SocProvider({ children }: { children: ReactNode }) {
       setEmployees((current) => current.map((employee) => (employee.id === snapshot.id ? { ...snapshot } : employee)));
     }
     setSimulationLocked(false);
+    setLockedEmployeeId(null);
+    lockedIdRef.current = null;
     setFeed((current) => current.filter((event) => event.source !== "simulation"));
   }, []);
 
@@ -120,14 +129,24 @@ export function SocProvider({ children }: { children: ReactNode }) {
     setKillToken((token) => token + 1);
   }, [resetSimulation]);
 
+  const setTargetEmployeeId = useCallback((id: string) => {
+    targetRef.current = id;
+    setTargetEmployeeIdState(id);
+  }, []);
+
   const applySimulationLock = useCallback(() => {
     if (lockAppliedRef.current) return;
+    const targetId = targetRef.current;
+    const current = employeesRef.current.find((employee) => employee.id === targetId);
+    if (!current) return;
     lockAppliedRef.current = true;
-    const current = employeesRef.current.find((employee) => employee.id === RASHAD_ID);
-    if (current && !snapshotRef.current) snapshotRef.current = { ...current };
+    if (!snapshotRef.current) snapshotRef.current = { ...current };
+    lockedIdRef.current = targetId;
+    setLockedEmployeeId(targetId);
+    const name = fullName(current);
     setEmployees((list) =>
       list.map((employee) =>
-        employee.id === RASHAD_ID
+        employee.id === targetId
           ? {
               ...employee,
               status: "Dondurulub",
@@ -142,7 +161,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
     pushFeed({
       id: crypto.randomUUID(),
       time: formatClock(new Date()),
-      title: "Hesab donduruldu: Rəşad Əliyev",
+      title: `Hesab donduruldu: ${name}`,
       detail: "Vahid risk balı 99/100. CRM ixracı dayandırıldı, sessiya bağlandı.",
       severity: "critical",
       category: "Sistem",
@@ -150,7 +169,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
     });
     pushToast({
       title: "Avtomatik bloklama",
-      message: "Rəşad Əliyevin hesabı donduruldu. Dondurulmuş hesab sayı yeniləndi.",
+      message: `${name} hesabı donduruldu. Dondurulmuş hesab sayı yeniləndi.`,
       tone: "critical",
     });
   }, [pushFeed, pushToast]);
@@ -198,7 +217,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
       if (!employee) return;
       const nextStatus = employee.status === "Dondurulub" ? "Aktiv" : "Dondurulub";
       setEmployees((current) => current.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)));
-      if (id === RASHAD_ID && nextStatus === "Aktiv") setSimulationLocked(false);
+      if (id === lockedIdRef.current && nextStatus === "Aktiv") {
+        setSimulationLocked(false);
+        setLockedEmployeeId(null);
+        lockedIdRef.current = null;
+      }
       pushFeed({
         id: crypto.randomUUID(),
         time: formatClock(new Date()),
@@ -299,6 +322,9 @@ export function SocProvider({ children }: { children: ReactNode }) {
       simPhase,
       killToken,
       simulationLocked,
+      targetEmployeeId,
+      setTargetEmployeeId,
+      lockedEmployeeId,
       toasts,
       dismissToast,
       openKillChain,
@@ -324,6 +350,9 @@ export function SocProvider({ children }: { children: ReactNode }) {
       simPhase,
       killToken,
       simulationLocked,
+      targetEmployeeId,
+      setTargetEmployeeId,
+      lockedEmployeeId,
       toasts,
       dismissToast,
       openKillChain,

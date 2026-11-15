@@ -6,7 +6,7 @@ import { useSoc } from "../context/SocContext.tsx";
 import { EmployeeTable } from "./EmployeeTable.tsx";
 import { LiveFeed } from "./LiveFeed.tsx";
 import { Panel } from "./ui.tsx";
-import { cn } from "../lib/utils.ts";
+import { cn, fullName } from "../lib/utils.ts";
 import type { AppTab } from "../types.ts";
 
 const LAYERS: { tab: AppTab; index: string; title: string; text: string }[] = [
@@ -16,7 +16,8 @@ const LAYERS: { tab: AppTab; index: string; title: string; text: string }[] = [
 ];
 
 export function Dashboard() {
-  const { phishingBlocked, deepfakeCaught, frozenCount, averageScore, feed, setTab, simulationLocked } = useSoc();
+  const { phishingBlocked, deepfakeCaught, frozenCount, averageScore, feed, setTab, simulationLocked, employees, lockedEmployeeId } = useSoc();
+  const lockedEmployee = employees.find((employee) => employee.id === lockedEmployeeId);
   const trend = useMemo(() => buildAttackTrend(), []);
 
   return (
@@ -28,7 +29,7 @@ export function Dashboard() {
 
       {simulationLocked ? (
         <div className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-          Son müdaxilə: Rəşad Əliyevin hesabı avtomatik donduruldu. Vahid risk balı <span className="font-bold">99/100 (KRİTİK)</span>. Məlumat sızması dayandırıldı.
+          Son müdaxilə: {lockedEmployee ? fullName(lockedEmployee) : "Seçilmiş əməkdaş"} hesabı avtomatik donduruldu. Vahid risk balı <span className="font-bold">99/100 (KRİTİK)</span>. Məlumat sızması dayandırıldı.
         </div>
       ) : null}
 

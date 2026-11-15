@@ -1,49 +1,61 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RotateCcw, Volume2, VolumeX, X } from "lucide-react";
+import { RASHAD_ID } from "../data/mockData.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { playStageCue, stopTones } from "../lib/tones.ts";
-import { cn } from "../lib/utils.ts";
+import { cn, fullName } from "../lib/utils.ts";
+import type { Employee } from "../types.ts";
 
-const STAGES = [
-  {
-    clock: "00:01",
-    title: "Çoxkanallı hücum başlayır",
-    risk: 89,
-    detail:
-      "Maliyyə şöbəsinin əməkdaşı Rəşad Əliyevə saxta vergi bildirişi (fişinq) və rəhbərin klonlanmış səsi ilə təcili dipfeyk səs mesajı gəlir. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə linkə klikləyir.",
-    logs: [
-      "QAT 1 · Fişinq mühərriki saxta vergi bildirişini qeydə aldı.",
-      "QAT 2 · Dipfeyk detektoru klonlanmış rəhbər səsini aşkarladı.",
-      "Əməkdaş keçidə kliklədi. Risk: 89%.",
-    ],
-  },
-  {
-    clock: "00:04",
-    title: "Hesab ələ keçirilir",
-    risk: 93,
-    detail: "Haker oğurlanmış şifrə ilə gecə saat 02:43-də xarici IP ünvanından (185.203.44.19) daxili sistemə sızır.",
-    logs: ["Xarici IP 185.203.44.19 saat 02:43-də Rəşad Əliyevin sessiyasını açdı."],
-  },
-  {
-    clock: "00:07",
-    title: "Daxili davranış anomaliyası",
-    risk: 97,
-    detail: "Haker 2 dəqiqə ərzində 14.500 müştəri məlumatını (CRM bazası) ixrac etməyə başlayır. Normal limit: 15 fayl/gün.",
-    logs: ["QAT 3 · 2 dəqiqəyə 14.500 CRM qeydi ixrac olunur. Norma: 15 fayl/gün."],
-  },
-  {
-    clock: "00:09",
-    title: "Zəncirvari əlaqələndirmə və avtomatik bloklama",
-    risk: 99,
-    detail:
-      "KiberGözətçi 1-ci və 2-ci qatdakı xəbərdarlıqları 3-cü qatdakı kütləvi yükləmə ilə birləşdirir. Vahid risk balı 99/100 (KRİTİK). Hesab saniyələr içində dondurulur və məlumat sızması dayandırılır.",
-    logs: [
-      "Üç qat birləşdirildi. Vahid risk balı: 99/100 (KRİTİK).",
-      "Hesab donduruldu. İxrac dayandı. İdarəetmə panelindəki say yeniləndi.",
-    ],
-  },
-] as const;
+function attackIp(employee: Employee): string {
+  if (employee.id === RASHAD_ID) return "185.203.44.19";
+  let hash = 0;
+  for (const char of employee.id) hash = (hash * 33 + char.charCodeAt(0)) >>> 0;
+  return `185.203.${(hash % 40) + 10}.${(hash % 200) + 20}`;
+}
+
+function buildStages(employee: Employee) {
+  const name = fullName(employee);
+  const ip = attackIp(employee);
+  const limit = employee.avgDailyDownloads;
+  return [
+    {
+      clock: "00:01",
+      title: "Çoxkanallı hücum başlayır",
+      risk: 89,
+      detail: `${employee.department} şöbəsinin əməkdaşı ${name} üçün saxta vergi bildirişi (fişinq) və rəhbərin klonlanmış səsi ilə təcili dipfeyk səs mesajı gəlir. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə linkə klikləyir.`,
+      logs: [
+        `QAT 1 · Fişinq mühərriki ${name} üçün saxta vergi bildirişini qeydə aldı.`,
+        "QAT 2 · Dipfeyk detektoru klonlanmış rəhbər səsini aşkarladı.",
+        `${name} keçidə kliklədi. Risk: 89%.`,
+      ],
+    },
+    {
+      clock: "00:04",
+      title: "Hesab ələ keçirilir",
+      risk: 93,
+      detail: `Haker oğurlanmış şifrə ilə gecə saat 02:43-də xarici IP ünvanından (${ip}) ${employee.email} hesabına sızır.`,
+      logs: [`Xarici IP ${ip} saat 02:43-də ${name} sessiyasını (${employee.email}) açdı.`],
+    },
+    {
+      clock: "00:07",
+      title: "Daxili davranış anomaliyası",
+      risk: 97,
+      detail: `Haker 2 dəqiqə ərzində 14.500 müştəri məlumatını (CRM bazası) ixrac etməyə başlayır. Normal limit: ${limit} fayl/gün.`,
+      logs: [`QAT 3 · 2 dəqiqəyə 14.500 CRM qeydi ixrac olunur. Norma: ${limit} fayl/gün.`],
+    },
+    {
+      clock: "00:09",
+      title: "Zəncirvari əlaqələndirmə və avtomatik bloklama",
+      risk: 99,
+      detail: `KiberGözətçi 1-ci və 2-ci qatdakı xəbərdarlıqları 3-cü qatdakı kütləvi yükləmə ilə birləşdirir. Vahid risk balı 99/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
+      logs: [
+        "Üç qat birləşdirildi. Vahid risk balı: 99/100 (KRİTİK).",
+        `${name} hesabı donduruldu. İxrac dayandı. İdarəetmə panelindəki say yeniləndi.`,
+      ],
+    },
+  ];
+}
 
 function formatElapsed(ms: number): string {
   const safe = Math.max(0, Math.min(ms, 10000));
@@ -54,7 +66,9 @@ function formatElapsed(ms: number): string {
 }
 
 export function KillChainModal() {
-  const { killOpen, closeKillChain, killToken, simPhase, replayKillChain, applySimulationLock, updatePhase } = useSoc();
+  const { killOpen, closeKillChain, killToken, simPhase, replayKillChain, applySimulationLock, updatePhase, employees, targetEmployeeId, setTargetEmployeeId } = useSoc();
+  const target = employees.find((employee) => employee.id === targetEmployeeId) ?? employees[0];
+  const stages = useMemo(() => buildStages(target), [target]);
   const [elapsed, setElapsed] = useState(0);
   const [stage, setStage] = useState(-1);
   const [soundOn, setSoundOn] = useState(true);
@@ -113,8 +127,8 @@ export function KillChainModal() {
   }, [killToken]);
 
   const active = stage < 0 ? 0 : stage;
-  const current = STAGES[active];
-  const logs = STAGES.slice(0, active + 1).flatMap((item) => item.logs);
+  const current = stages[active];
+  const logs = stages.slice(0, active + 1).flatMap((item) => item.logs);
   const progress = Math.min(100, (Math.min(elapsed, 10000) / 10000) * 100);
 
   return (
@@ -162,6 +176,21 @@ export function KillChainModal() {
                 </div>
               </div>
 
+              <label className="mt-4 flex max-w-md flex-col gap-1.5 text-xs font-semibold tracking-wide text-slate-400">
+                Hədəf əməkdaş
+                <select
+                  value={target.id}
+                  onChange={(event) => setTargetEmployeeId(event.target.value)}
+                  className="rounded-xl border border-[#1E293B] bg-[#0F172A] px-3 py-2.5 text-sm font-medium text-slate-100 outline-none"
+                >
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {fullName(employee)} — {employee.position}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr]">
                 <div className="rounded-2xl border border-[#1E293B] bg-[#0F172A] p-4">
                   <div className="text-[11px] text-slate-500">{simPhase === "done" ? "TAMAMLANDI" : "CANLI TAYMER"}</div>
@@ -183,7 +212,7 @@ export function KillChainModal() {
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {STAGES.map((item, index) => {
+                {stages.map((item, index) => {
                   const state = index < active ? "done" : index === active ? "active" : "pending";
                   return (
                     <article

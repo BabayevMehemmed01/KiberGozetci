@@ -52,7 +52,16 @@ export function getBreach(employeeId: string): BreachStory | null {
   return BREACHES[employeeId] ?? null;
 }
 
-export function hourlyProfile(employee: Employee, showBreach: boolean): HourPoint[] {
+export function simulationBreach(employee: Employee): BreachStory {
+  return {
+    hour: 2,
+    files: 14500,
+    title: "CRM bazasının kütləvi ixracı",
+    detail: `Saat 02:30-da 14.500 müştəri qeydi ixrac edilib. ${employee.firstName} ${employee.lastName} üçün şəxsi limit: ${employee.avgDailyDownloads} fayl/gün.`,
+  };
+}
+
+export function hourlyProfile(employee: Employee, showBreach: boolean, story: BreachStory | null = getBreach(employee.id)): HourPoint[] {
   const start = Number(employee.workStart.slice(0, 2));
   const end = Number(employee.workEnd.slice(0, 2));
   const span = Math.max(1, end - start);
@@ -63,7 +72,6 @@ export function hourlyProfile(employee: Employee, showBreach: boolean): HourPoin
     return Math.exp(-0.5 * ((hour - mid) / sigma) ** 2);
   });
   const weightSum = weights.reduce((sum, value) => sum + value, 0) || 1;
-  const story = getBreach(employee.id);
   const ceiling = Math.max(4, employee.avgDailyDownloads * 0.42);
 
   return weights.map((weight, hour) => {

@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import { RASHAD_ID } from "../data/mockData.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { StatusPill } from "./ui.tsx";
 import { cn, fullName, scoreTone, workHours } from "../lib/utils.ts";
@@ -13,7 +12,7 @@ const TEST_LABEL: Record<TestOutcome, string> = {
 };
 
 export function EmployeeTable() {
-  const { employees, sendAwarenessTest, toggleFreeze, simulationLocked } = useSoc();
+  const { employees, sendAwarenessTest, toggleFreeze, simulationLocked, lockedEmployeeId } = useSoc();
   const [query, setQuery] = useState("");
   const [riskFirst, setRiskFirst] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -81,7 +80,7 @@ export function EmployeeTable() {
                   key={employee.id}
                   className={cn(
                     "border-b border-[#1E293B]/80",
-                    simulationLocked && employee.id === RASHAD_ID && "bg-red-500/10",
+                    simulationLocked && employee.id === lockedEmployeeId && "bg-red-500/10",
                   )}
                 >
                   <td className="px-2 py-3">

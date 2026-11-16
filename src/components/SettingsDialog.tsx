@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Settings, X } from "lucide-react";
+import { Mail, Settings, X } from "lucide-react";
 import { useSoc, type SocTheme } from "../context/SocContext.tsx";
 import { cn } from "../lib/utils.ts";
 
@@ -13,7 +13,9 @@ const THEMES: { id: SocTheme; title: string; caption: string; swatch: string }[]
 ];
 
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { theme, setTheme, quarantineThreshold, setQuarantineThreshold } = useSoc();
+  const { theme, setTheme, quarantineThreshold, setQuarantineThreshold, mailAlertsEnabled, setMailAlertsEnabled, alertRecipient, setAlertRecipient, sendSecurityAlert } = useSoc();
+  const [sendingTest, setSendingTest] = useState(false);
+  const [testNote, setTestNote] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -39,7 +41,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-title"
-            className="w-full max-w-md rounded-3xl border border-[#1E293B] bg-[#0F172A] p-5 shadow-2xl"
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-3xl border border-[#1E293B] bg-[#0F172A] p-5 shadow-2xl"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
@@ -103,6 +105,62 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               />
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 Fişinq analizində ümumi risk balı {quarantineThreshold}%-i keçəndə avtomatik karantin işə düşür. Şantaj, pul və ya şifrə tələbi bu həddən asılı olmayaraq karantinə alınır.
+              </p>
+            </div>
+
+            <div className="mt-5 border-t border-[#1E293B] pt-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Mail className="h-4 w-4 text-cyan-300" />
+                  Avtomatik E-poçt Bildirişləri (SMTP)
+                </h3>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={mailAlertsEnabled}
+                  onClick={() => setMailAlertsEnabled(!mailAlertsEnabled)}
+                  className={cn("relative h-6 w-11 shrink-0 rounded-full border", mailAlertsEnabled ? "border-cyan-400/70 bg-cyan-400/30" : "border-[#1E293B] bg-[#060B14]")}
+                >
+                  <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", mailAlertsEnabled ? "left-6" : "left-0.5")} />
+                </button>
+              </div>
+              <label className="block text-xs font-semibold text-slate-300" htmlFor="alert-recipient">
+                Alıcı E-poçt Ünvanı
+              </label>
+              <input
+                id="alert-recipient"
+                type="email"
+                value={alertRecipient}
+                onChange={(event) => setAlertRecipient(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60"
+              />
+              <button
+                type="button"
+                disabled={sendingTest}
+                onClick={() => {
+                  setSendingTest(true);
+                  setTestNote("Test bildirişi göndərilir...");
+                  void sendSecurityAlert(
+                    {
+                      alertType: "Test bildirişi",
+                      targetEmployee: "SOC operatoru",
+                      riskScore: 0,
+                      mitreCode: "—",
+                      details: "SMTP kanalı yoxlanıldı. Heç bir hesab dondurulmayıb və heç bir mesaj karantinə alınmayıb.",
+                    },
+                    { force: true },
+                  ).then((result) => {
+                    setTestNote(result.message);
+                    setSendingTest(false);
+                  });
+                }}
+                className="mt-3 w-full rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-60"
+              >
+                {sendingTest ? "Göndərilir..." : "Test Bildirişi Göndər"}
+              </button>
+              {testNote ? <p className="mt-2 text-xs leading-5 text-cyan-200">{testNote}</p> : null}
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                Karantin və hesabın dondurulması bu ünvana SOC hesabatı göndərir. SMTP girişi yalnız server mühitində saxlanılır.
               </p>
             </div>
           </motion.div>

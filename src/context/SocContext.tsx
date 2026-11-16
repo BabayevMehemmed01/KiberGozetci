@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RASHAD_ID, employees as seedEmployees, threatJournal } from "../data/mockData.ts";
+import { postSecurityAlert, saveMailSettings, loadMailSettings, type SecurityAlertInput } from "../lib/alertClient.ts";
 import { randomAttackIp, type SimulationOutcome } from "../lib/scenario.ts";
 import { unlockAudio } from "../lib/tones.ts";
 import { formatClock, fullName } from "../lib/utils.ts";
@@ -40,6 +41,11 @@ interface SocContextValue {
   applyTraining: (id: string, correct: number) => void;
   registerPhishingBlock: (title: string) => void;
   registerDeepfakeCatch: (title: string) => void;
+  mailAlertsEnabled: boolean;
+  setMailAlertsEnabled: (enabled: boolean) => void;
+  alertRecipient: string;
+  setAlertRecipient: (email: string) => void;
+  sendSecurityAlert: (alert: SecurityAlertInput, options?: { force?: boolean }) => Promise<{ ok: boolean; skipped: boolean; message: string }>;
 }
 
 const SocContext = createContext<SocContextValue | null>(null);
@@ -114,6 +120,8 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<SocTheme>(loadTheme);
   const [quarantineThreshold, setThresholdState] = useState(loadThreshold);
   const [lastOutcome, setLastOutcome] = useState<SimulationOutcome | null>(null);
+  const [mailAlertsEnabled, setMailAlertsEnabledState] = useState(() => loadMailSettings().enabled);
+  const [alertRecipient, setAlertRecipientState] = useState(() => loadMailSettings().recipientEmail);
   const employeesRef = useRef(employees);
   const phaseRef = useRef<SimPhase>("idle");
   const snapshotRef = useRef<Employee | null>(null);
@@ -144,6 +152,31 @@ export function SocProvider({ children }: { children: ReactNode }) {
     setThresholdState(next);
     localStorage.setItem("kibergozetci-threshold", String(next));
   }, []);
+
+  const setMailAlertsEnabled = useCallback((enabled: boolean) => {
+    setMailAlertsEnabledState(enabled);
+    saveMailSettings(enabled, loadMailSettings().recipientEmail);
+  }, []);
+
+  const setAlertRecipient = useCallback((email: string) => {
+    setAlertRecipientState(email);
+    saveMailSettings(loadMailSettings().enabled, email);
+  }, []);
+
+  const sendSecurityAlert = useCallback(
+    async (alert: SecurityAlertInput, options?: { force?: boolean }) => {
+      const result = await postSecurityAlert(alert, options);
+      if (!result.skipped) {
+        pushToast({
+          title: result.ok ? "E-poçt bildirişi göndərildi" : "E-poçt göndərilmədi",
+          message: result.message,
+          tone: result.ok ? "success" : "warning",
+        });
+      }
+      return result;
+    },
+    [pushToast],
+  );
 
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -265,7 +298,14 @@ export function SocProvider({ children }: { children: ReactNode }) {
       message: `${name} hesabı donduruldu. Risk ${outcome.risk}/100, reaksiya ${outcome.blockSeconds.toFixed(1)} s.`,
       tone: "critical",
     });
-  }, [pushFeed, pushToast]);
+    void sendSecurityAlert({
+      alertType: "Zəncirvari hücum simulyasiyası",
+      targetEmployee: `${name} · ${current.department} · ${current.email}`,
+      riskScore: outcome.risk,
+      mitreCode: "T1078 — Valid Accounts",
+      details: `${outcome.title}. Bloklama ${outcome.blockSeconds.toFixed(1)} saniyədə tamamlandı. Qarşısı alınan zərər ₼ ${outcome.damage.toLocaleString("az-AZ")}. Tədbir: hesab donduruldu, ixrac dayandırıldı, sessiya bağlandı.`,
+    });
+  }, [pushFeed, pushToast, sendSecurityAlert]);
 
   const sendAwarenessTest = useCallback(
     (id: string) => {
@@ -329,8 +369,17 @@ export function SocProvider({ children }: { children: ReactNode }) {
         message: fullName(employee),
         tone: nextStatus === "Dondurulub" ? "critical" : "success",
       });
+      if (nextStatus === "Dondurulub") {
+        void sendSecurityAlert({
+          alertType: "Hesab donduruldu",
+          targetEmployee: `${fullName(employee)} · ${employee.department} · ${employee.email}`,
+          riskScore: Math.min(98, Math.max(72, 100 - employee.awarenessScore)),
+          mitreCode: "T1078 — Valid Accounts",
+          details: `${employee.position} vəzifəli hesab operator tərəfindən donduruldu. Sessiya bağlandı və ixrac dayandırıldı. Son sınaq: ${employee.lastTestResult}.`,
+        });
+      }
     },
-    [pushFeed, pushToast],
+    [pushFeed, pushToast, sendSecurityAlert],
   );
 
   const applyTraining = useCallback(
@@ -441,6 +490,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
       applyTraining,
       registerPhishingBlock,
       registerDeepfakeCatch,
+      mailAlertsEnabled,
+      setMailAlertsEnabled,
+      alertRecipient,
+      setAlertRecipient,
+      sendSecurityAlert,
     }),
     [
       employees,
@@ -474,6 +528,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
       applyTraining,
       registerPhishingBlock,
       registerDeepfakeCatch,
+      mailAlertsEnabled,
+      setMailAlertsEnabled,
+      alertRecipient,
+      setAlertRecipient,
+      sendSecurityAlert,
     ],
   );
 

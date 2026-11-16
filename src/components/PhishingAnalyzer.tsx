@@ -23,13 +23,14 @@ const QUARANTINE = {
 } as const;
 
 export function PhishingAnalyzer() {
-  const { registerPhishingBlock, quarantineThreshold } = useSoc();
+  const { registerPhishingBlock, quarantineThreshold, sendSecurityAlert } = useSoc();
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [report, setReport] = useState<PhishingReport | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [loggedKey, setLoggedKey] = useState("");
   const [scanToken, setScanToken] = useState(0);
+  const [mailNote, setMailNote] = useState("");
   const textRef = useRef(text);
   const urlRef = useRef(url);
   const hasReport = useRef(false);
@@ -49,6 +50,7 @@ export function PhishingAnalyzer() {
     setUrl(nextUrl);
     setReport(next);
     setSnapshot(`${nextText}||${nextUrl}`);
+    setMailNote("");
   }
 
   useEffect(() => {
@@ -176,11 +178,21 @@ export function PhishingAnalyzer() {
                 onClick={() => {
                   registerPhishingBlock(`Karantin: ${report.overall}% riskli mesaj`);
                   setLoggedKey(`${text}||${url}`);
+                  const excerpt = text.replace(/\s+/g, " ").trim().slice(0, 280);
+                  setMailNote("E-poçt bildirişi göndərilir...");
+                  void sendSecurityAlert({
+                    alertType: "Fişinq karantini",
+                    targetEmployee: "Poçt şlüzü · yerli analiz",
+                    riskScore: report.overall,
+                    mitreCode: report.techniques.map((item) => item.code).filter((code) => code !== "—").join(", ") || "T1566",
+                    details: `Mesaj avtomatik karantinə alındı və jurnalda qeyd olundu.${url.trim() ? ` Keçid: ${url.trim()}.` : " Keçid yoxdur."} Mətn: ${excerpt || "Mətn boşdur."}`,
+                  }).then((result) => setMailNote(result.message));
                 }}
                 className="w-full rounded-xl border border-red-400/40 bg-red-500/15 py-2.5 text-sm font-bold text-red-100 disabled:opacity-40"
               >
                 {canLog ? "Karantinə sal və jurnala yaz" : report.quarantine === "tehlukesiz" ? "Karantin tələb olunmur" : "Jurnalda qeyd olundu"}
               </button>
+              {mailNote ? <p className="text-xs leading-5 text-cyan-200">{mailNote}</p> : null}
             </div>
           )}
         </Panel>

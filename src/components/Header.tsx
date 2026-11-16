@@ -30,8 +30,7 @@ export function Header() {
                 <img
                   src="/logo.jpg"
                   alt="Neyron Baxış"
-                  style={{ objectPosition: "48% 46%" }}
-                  className="h-full w-full rounded-full object-cover object-[48%_46%] scale-[1.42]"
+                  className="h-full w-full rounded-full object-cover object-[50%_34%] scale-[1.28]"
                 />
               </div>
             </div>

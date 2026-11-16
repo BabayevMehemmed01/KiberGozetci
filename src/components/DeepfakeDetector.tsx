@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Mic, Pause, Play, Upload } from "lucide-react";
 import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
@@ -37,6 +37,8 @@ export function DeepfakeDetector() {
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [loggedLabel, setLoggedLabel] = useState("");
+  const [liveCv, setLiveCv] = useState<number | null>(null);
+  const publishCv = useCallback((value: number) => setLiveCv(value), []);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -140,14 +142,21 @@ export function DeepfakeDetector() {
       }
     } catch {
       if (videoFile && file) {
-        const lip = await estimateLipSync(file, null, 0);
-        const frame = await inspectVideoFrame(file);
-        rememberPreview(URL.createObjectURL(file));
-        setMediaKind("video");
-        setVideo(lip);
-        setStill(frame);
-        setLabel(nextLabel);
-        setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
+        try {
+          const lip = await estimateLipSync(file, null, 0);
+          const frame = await inspectVideoFrame(file);
+          rememberPreview(URL.createObjectURL(file));
+          setMediaKind("video");
+          setVideo(lip);
+          setStill(frame);
+          setLabel(nextLabel);
+          setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
+        } catch {
+          rememberPreview(URL.createObjectURL(file));
+          setMediaKind("video");
+          setLabel(nextLabel);
+          setError("Video kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
+        }
       } else {
         setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG, MP4, JPG və ya PNG formatında yenidən cəhd edin.");
       }
@@ -187,7 +196,10 @@ export function DeepfakeDetector() {
       setScanToken((token) => token + 1);
       setLabel(file.name);
     } catch {
-      setError("Şəkil kadrı oxunmadı. JPG, PNG və ya WEBP seçin.");
+      rememberPreview(URL.createObjectURL(file));
+      setMediaKind("image");
+      setStill(null);
+      setError("Şəkil kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
     } finally {
       setLoading(false);
     }
@@ -250,7 +262,9 @@ export function DeepfakeDetector() {
   }
 
   const verdict = report ? verdictFor(report) : null;
+  const scanning = mediaKind === "image" || mediaKind === "video";
   const cvScore = video && still ? Math.round(video.lipSync * 0.7 + still.score * 0.3) : video ? video.lipSync : still ? still.score : null;
+  const shownCv = scanning && liveCv !== null ? liveCv : cvScore;
   const cvHint = still
     ? `Laplasian dispersiya ${Math.round(still.variance)} · GAN hamarlığı ${still.smoothness}% · piksel uyğunluğu ${still.score}%`
     : video
@@ -384,7 +398,7 @@ export function DeepfakeDetector() {
             <SpectrogramCanvas samples={samples} sampleRate={sampleRate} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
           </div>
           <div className="mt-4">
-            <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} />
+            <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} baseScore={cvScore} onLiveScore={publishCv} />
           </div>
         </Panel>
 
@@ -397,10 +411,18 @@ export function DeepfakeDetector() {
                 <div className="mt-1 font-mono text-4xl font-semibold">{still.score}%</div>
                 <div className="mt-1 text-sm font-bold">Üz və dəri hamarlığı ölçüldü</div>
               </div>
-              <Meter label="Dodaq/səs və CV piksel uyğunluğu" value={still.score} intent="safe" hint={cvHint} />
+              <Meter live label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
               <p className="text-xs leading-5 text-slate-400">
                 Laplasian dispersiya {Math.round(still.variance)} və {still.smoothness}% hamar hüceyrə GAN artefakt torunda işarələnib. Səs izi üçün eyni kadra video əlavə edin.
               </p>
+            </div>
+          ) : scanning && !report ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-emerald-100">
+                <div className="text-[11px] font-bold tracking-[0.16em]">CV SKANER</div>
+                <div className="mt-1 text-sm font-bold">Kadr üzərində yaşıl lazer gəzir, uyğunluq yenilənir</div>
+              </div>
+              <Meter live label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
             </div>
           ) : !report || !verdict ? (
             <div className="grid min-h-[320px] place-items-center text-center text-sm text-slate-400">
@@ -418,7 +440,7 @@ export function DeepfakeDetector() {
               <Meter label="Səs sintez izləri (Vocoder)" value={report.vocoder} intent="risk" hint="Təmiz harmonik sıra və robotik sabitlik" />
               <Meter label="Təbii nəfəs fasilələri" value={report.breathNatural} intent="safe" hint="Danışıq arasındakı səssizlik və nəfəs" />
               <Meter label="Tezlik spektri anomaliyası" value={report.spectrumAnomaly} intent="risk" hint="Ton və ucalığın süni sabitliyi" />
-              <Meter label="Dodaq/səs və CV piksel uyğunluğu" value={cvScore} intent="safe" hint={cvHint} />
+              <Meter live={scanning} label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
               <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                 <Metric label="RMS variasiyası" value={report.metrics.amplitudeVariation.toFixed(2)} />
                 <Metric label="ZCR dəyişkənliyi" value={report.metrics.zcrVariation.toFixed(3)} />

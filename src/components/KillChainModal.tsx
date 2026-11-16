@@ -194,7 +194,7 @@ export function KillChainModal() {
     <AnimatePresence>
       {killOpen ? (
         <motion.div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-[#02060d]/80 p-3 backdrop-blur-md sm:p-6"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/20 p-3 backdrop-blur-sm sm:p-6 dark:bg-slate-950/80 dark:backdrop-blur-md"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -203,17 +203,20 @@ export function KillChainModal() {
           aria-labelledby="kill-title"
         >
           <motion.div
-            className={cn("scanlines relative max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-3xl border bg-[#060B14] p-4 shadow-2xl sm:p-6", active >= 2 ? "border-red-400/50" : "border-cyan-400/30")}
+            className={cn(
+              "scanlines relative max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-3xl border bg-slate-100/95 p-4 text-slate-900 shadow-2xl sm:p-6 dark:bg-slate-900/95 dark:text-slate-100",
+              active >= 2 ? "border-red-400/50" : "border-slate-300 dark:border-cyan-400/30",
+            )}
             initial={{ y: 24, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
             exit={{ y: 16, opacity: 0 }}
           >
-            <div className={cn("pointer-events-none absolute inset-0", active >= 2 ? "bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.16),transparent_55%)]" : "bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.12),transparent_50%)]")} />
+            <div className={cn("pointer-events-none absolute inset-0", active >= 2 ? "bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.1),transparent_55%)] dark:bg-[radial-gradient(circle_at_top,rgba(239,68,68,0.16),transparent_55%)]" : "bg-[radial-gradient(circle_at_top,rgba(14,116,144,0.08),transparent_50%)] dark:bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.12),transparent_50%)]")} />
             <div className="relative">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-[11px] font-bold tracking-[0.18em] text-red-300">CANLI HÜCUM ZƏNCİRİ</p>
-                  <h2 id="kill-title" className="mt-1 text-2xl font-extrabold text-white">Zəncirvari hücum simulyasiyası</h2>
+                  <h2 id="kill-title" className="mt-1 text-2xl font-extrabold text-slate-900 dark:text-white">Zəncirvari hücum simulyasiyası</h2>
                   <p className="mt-1 text-sm text-slate-400">
                     {scenario.title} · {scenario.ip} · {scenario.clock} · {scenario.files.toLocaleString("az-AZ")} fayl · yekun {scenario.risks[3]}/100 · {scenario.blockSeconds.toFixed(1)} s · ₼ {scenario.damage.toLocaleString("az-AZ")}
                   </p>
@@ -227,12 +230,12 @@ export function KillChainModal() {
                         return !value;
                       });
                     }}
-                    className="rounded-xl border border-[#1E293B] p-2 text-slate-300"
+                    className="cursor-pointer rounded-xl border border-slate-300 p-2 text-slate-700 dark:border-[#1E293B] dark:text-slate-300"
                     aria-label={soundOn ? "Səsi bağla" : "Səsi aç"}
                   >
                     {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
                   </button>
-                  <button type="button" onClick={closeKillChain} className="rounded-xl border border-[#1E293B] p-2 text-slate-300" aria-label="Bağla">
+                  <button type="button" onClick={closeKillChain} className="cursor-pointer rounded-xl border border-slate-300 p-2 text-slate-700 dark:border-[#1E293B] dark:text-slate-300" aria-label="Bağla">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -243,7 +246,7 @@ export function KillChainModal() {
                 <select
                   value={target.id}
                   onChange={(event) => setTargetEmployeeId(event.target.value)}
-                  className="rounded-xl border border-[#1E293B] bg-[#0F172A] px-3 py-2.5 text-sm font-medium text-slate-100 outline-none"
+                  className="cursor-pointer rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-900 outline-none dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-slate-100"
                 >
                   {employees.map((employee) => (
                     <option key={employee.id} value={employee.id}>
@@ -254,12 +257,12 @@ export function KillChainModal() {
               </label>
 
               <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr]">
-                <div className="rounded-2xl border border-[#1E293B] bg-[#0F172A] p-4">
+                <div className="rounded-2xl border border-slate-300 bg-white p-4 dark:border-[#1E293B] dark:bg-[#0F172A]">
                   <div className="text-[11px] text-slate-500">{simPhase === "done" ? "TAMAMLANDI" : "CANLI TAYMER"}</div>
                   <div className="mt-1 font-mono text-3xl text-cyan-200">{formatElapsed(elapsed)}</div>
                   <div className="mt-2 text-xs text-slate-400">Ssenari vaxtı {current.clock}</div>
                 </div>
-                <div className="rounded-2xl border border-[#1E293B] bg-[#0F172A] p-4">
+                <div className="rounded-2xl border border-slate-300 bg-white p-4 dark:border-[#1E293B] dark:bg-[#0F172A]">
                   <div className="flex items-end justify-between">
                     <div>
                       <div className="text-[11px] text-slate-500">VAHİD RİSK BALI</div>
@@ -267,7 +270,7 @@ export function KillChainModal() {
                     </div>
                     <div className="text-sm font-extrabold text-red-300">{active >= 3 ? "KRİTİK" : "YÜKSƏLİR"}</div>
                   </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#060B14]">
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-[#060B14]">
                     <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-red-500" style={{ width: `${progress}%` }} />
                   </div>
                 </div>
@@ -291,7 +294,7 @@ export function KillChainModal() {
                         <span className="text-slate-400">MƏRHƏLƏ {index + 1}</span>
                         <span className="font-mono text-cyan-200">{item.clock}</span>
                       </div>
-                      <h3 className="mt-2 text-sm font-bold text-white">{item.title}</h3>
+                      <h3 className="mt-2 text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
                       <p className="mt-1 font-mono text-[11px] text-amber-200">{item.mitre}</p>
                       <p className="mt-2 text-xs leading-5 text-slate-300">{item.detail}</p>
                     </article>
@@ -299,7 +302,7 @@ export function KillChainModal() {
                 })}
               </div>
 
-              <div className="mt-4 rounded-2xl border border-[#1E293B] bg-black/40 p-4 font-mono text-xs leading-6 text-cyan-100">
+              <div className="mt-4 rounded-2xl border border-slate-300 bg-slate-200/90 p-4 font-mono text-xs leading-6 text-slate-800 dark:border-[#1E293B] dark:bg-black/40 dark:text-cyan-100">
                 {logs.map((line) => (
                   <div key={line}>{`> ${line}`}</div>
                 ))}
@@ -310,7 +313,7 @@ export function KillChainModal() {
                   type="button"
                   disabled={simPhase !== "done"}
                   onClick={() => downloadIncident(target, stages, scenario)}
-                  className="rounded-xl border border-amber-300/40 px-4 py-2.5 text-sm font-bold text-amber-100 disabled:opacity-40"
+                  className="cursor-pointer rounded-xl border border-amber-700/30 px-4 py-2.5 text-sm font-bold text-amber-900 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-300/40 dark:text-amber-100"
                 >
                   Kiber-İnsident Hesabatını Yüklə
                 </button>
@@ -321,12 +324,12 @@ export function KillChainModal() {
                     setElapsed(0);
                     replayKillChain();
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/40 px-4 py-2.5 text-sm font-bold text-cyan-100"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-700/30 px-4 py-2.5 text-sm font-bold text-cyan-900 dark:border-cyan-300/40 dark:text-cyan-100"
                 >
                   <RotateCcw className="h-4 w-4" />
                   Yenidən başlat
                 </button>
-                <button type="button" onClick={closeKillChain} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-950">
+                <button type="button" onClick={closeKillChain} className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-slate-50 dark:bg-slate-100 dark:text-slate-950">
                   Paneldə göstər
                 </button>
               </div>

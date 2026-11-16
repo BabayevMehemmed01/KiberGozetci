@@ -20,7 +20,7 @@ export function DefenseInsight({
           ))}
         </ul>
       </div>
-      <div>
+      <div className="max-h-[300px] overflow-y-auto pr-1">
         <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">İZAHOLUNAN QƏRAR AĞACI</div>
         <ol className="mt-2 space-y-2">
           {steps.map((step, index) => (

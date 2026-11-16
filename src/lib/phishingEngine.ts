@@ -791,10 +791,11 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   if (quarantine === "alindi" && techniques.length === 0) {
     techniques.push({ code: "T1566", name: "Phishing" });
   }
+  const pressureWords = signals.map((signal) => `«${signal.label}»`);
   const findings = [
     ...intents,
     ...(wall.forced || intent.floor >= 84 ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
-    ...signals.map((signal) => `Təzyiq və ya oğurluq sözü: «${signal.label}».`),
+    ...(pressureWords.length > 0 ? [`Təzyiq və ya oğurluq sözləri: ${pressureWords.join(", ")}`] : []),
     ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
     ...domain.reasons,
     ...extras.reasons,

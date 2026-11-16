@@ -1,8 +1,21 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(html:not([data-theme="daylight"]) *));
+
 @theme {
   --font-sans: "Manrope", "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Manrope", ui-monospace, monospace;
+  --animate-scan: cv-scan 2.4s ease-in-out infinite;
+}
+
+@keyframes cv-scan {
+  0%,
+  100% {
+    top: 0;
+  }
+  50% {
+    top: calc(100% - 2px);
+  }
 }
 
 @layer base {
@@ -384,6 +397,7 @@ html[data-theme="cyber"] input[type="range"] {
   .kill-btn,
   .radar-ring,
   .scan-laser,
+  .animate-scan,
   .confetti-bit {
     animation: none;
   }

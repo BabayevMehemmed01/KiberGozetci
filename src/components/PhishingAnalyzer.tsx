@@ -223,10 +223,10 @@ export function PhishingAnalyzer() {
               </div>
             ) : null}
           </Panel>
-          <Panel>
+          <Panel className="max-h-[300px] overflow-y-auto">
             <h3 className="mb-3 text-sm font-semibold text-white">Aşkarlanan əlamətlər</h3>
             {report.analyzedUrl ? <p className="mb-3 font-mono text-xs break-all text-cyan-200">{report.analyzedUrl}</p> : null}
-            <ul className="space-y-2 text-sm text-slate-300">
+            <ul className="space-y-2 text-sm break-words text-slate-300">
               {report.findings.map((finding) => (
                 <li key={finding} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
                   {finding}

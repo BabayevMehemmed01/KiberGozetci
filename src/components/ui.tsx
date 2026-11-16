@@ -22,11 +22,13 @@ export function Meter({
   value,
   hint,
   intent,
+  live = false,
 }: {
   label: string;
   value: number | null;
   hint?: string;
   intent: "risk" | "safe";
+  live?: boolean;
 }) {
   const color =
     value === null
@@ -56,7 +58,7 @@ export function Meter({
           className="h-full rounded-full"
           initial={{ width: 0 }}
           animate={{ width: value === null ? 0 : `${clamp(value)}%` }}
-          transition={{ duration: 0.55, ease: "easeOut" }}
+          transition={live ? { duration: 0.12, ease: "linear" } : { duration: 0.55, ease: "easeOut" }}
           style={{ background: color, boxShadow: `0 0 8px ${color}33` }}
         />
       </div>

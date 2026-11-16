@@ -5,8 +5,23 @@ import { Header } from "./components/Header.tsx";
 import { InsiderTracker } from "./components/InsiderTracker.tsx";
 import { KillChainModal } from "./components/KillChainModal.tsx";
 import { PhishingAnalyzer } from "./components/PhishingAnalyzer.tsx";
+import { TrainingPage } from "./components/TrainingPage.tsx";
 import { ToastViewport } from "./components/ui.tsx";
 import { SocProvider, useSoc } from "./context/SocContext.tsx";
+
+function currentRoute(): "soc" | "training" | "redirect" {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const params = new URLSearchParams(window.location.search);
+  if (path !== "/training" && params.get("phish_trap") === "1") {
+    const next = new URL("/training", window.location.origin);
+    const employee = params.get("emp");
+    if (employee) next.searchParams.set("emp", employee);
+    next.searchParams.set("phish_trap", "1");
+    window.location.replace(next.toString());
+    return "redirect";
+  }
+  return path === "/training" ? "training" : "soc";
+}
 
 function Shell() {
   const { tab } = useSoc();
@@ -43,6 +58,9 @@ function Shell() {
 }
 
 export default function App() {
+  const route = currentRoute();
+  if (route === "redirect") return null;
+  if (route === "training") return <TrainingPage />;
   return (
     <SocProvider>
       <Shell />

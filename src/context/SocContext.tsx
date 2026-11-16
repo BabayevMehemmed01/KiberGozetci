@@ -3,6 +3,7 @@ import { RASHAD_ID, employees as seedEmployees, threatJournal } from "../data/mo
 import { postSecurityAlert, saveMailSettings, loadMailSettings, type SecurityAlertInput } from "../lib/alertClient.ts";
 import { randomAttackIp, type SimulationOutcome } from "../lib/scenario.ts";
 import { unlockAudio } from "../lib/tones.ts";
+import { TRAINING_LOG_KEY, applyTrainingRecord, readTrainingLog, trainingFeedEvent } from "../lib/trainingSync.ts";
 import { formatClock, fullName } from "../lib/utils.ts";
 import type { AppTab, Employee, FeedEvent, SimPhase, ToastMessage } from "../types.ts";
 
@@ -83,38 +84,11 @@ function stampJournal(events: FeedEvent[]): FeedEvent[] {
   }));
 }
 
-const TRAP_HIT_KEY = "kibergozetci-phish-trap-hit";
 const TRAP_PENDING_KEY = "kibergozetci-phish-trap-pending";
 
 export interface PhishingTrap {
   employeeId: string | null;
   employeeName: string;
-}
-
-function normalizeName(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("az-AZ");
-}
-
-function readPendingTrap(): PhishingTrap | null {
-  try {
-    const raw = sessionStorage.getItem(TRAP_PENDING_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PhishingTrap>;
-    if (typeof parsed.employeeName !== "string" || !parsed.employeeName.trim()) return null;
-    return { employeeId: parsed.employeeId ?? null, employeeName: parsed.employeeName.trim() };
-  } catch {
-    return null;
-  }
-}
-
-function initialTab(): AppTab {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("phish_trap") === "1" || sessionStorage.getItem(TRAP_PENDING_KEY)) return "insider";
-  } catch {
-    return "overview";
-  }
-  return "overview";
 }
 
 const LIVE_KINDS = [
@@ -146,8 +120,8 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const [feed, setFeed] = useState<FeedEvent[]>(() => stampJournal(threatJournal));
   const [phishingBlocked, setPhishingBlocked] = useState(() => 136 + Math.floor(Math.random() * 33));
   const [deepfakeCaught, setDeepfakeCaught] = useState(() => 16 + Math.floor(Math.random() * 13));
-  const [tab, setTab] = useState<AppTab>(initialTab);
-  const [phishingTrap, setPhishingTrap] = useState<PhishingTrap | null>(readPendingTrap);
+  const [tab, setTab] = useState<AppTab>("overview");
+  const [phishingTrap, setPhishingTrap] = useState<PhishingTrap | null>(null);
   const [killOpen, setKillOpen] = useState(false);
   const [simPhase, setSimPhase] = useState<SimPhase>("idle");
   const [killToken, setKillToken] = useState(0);
@@ -237,7 +211,10 @@ export function SocProvider({ children }: { children: ReactNode }) {
 
   const sendPhishingTrap = useCallback(
     (employeeName: string) => {
-      const name = employeeName.trim() || "Rəşad Əliyev";
+      const name = employeeName.trim().replace(/\s+/g, " ");
+      if (!name) {
+        return Promise.resolve({ ok: false, skipped: false, message: "Əməkdaş seçilməyib." });
+      }
       return sendSecurityAlert(
         {
           type: "phishing_trap",
@@ -246,7 +223,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
           employeeName: name,
           riskScore: 72,
           mitreCode: "T1566.002 — Spearphishing Link",
-          details: `${name} üçün təcili hesab təsdiqi görünümlü sınaq məktubu göndərildi. Keçid yalnız bu saytın fişinq tələsinə açılır.`,
+          details: `${name} üçün təcili hesab təsdiqi görünümlü sınaq məktubu göndərildi. Keçid yalnız /training səhifəsinə açılır.`,
         },
         { force: true },
       );
@@ -268,65 +245,38 @@ export function SocProvider({ children }: { children: ReactNode }) {
     setFeed((current) => [event, ...current].slice(0, 16));
   }, []);
 
-  const trapBoot = useRef(false);
-  useLayoutEffect(() => {
-    if (trapBoot.current) return;
-    trapBoot.current = true;
-    const params = new URLSearchParams(window.location.search);
-    const armed = params.get("phish_trap") === "1";
-    const rawName = params.get("emp")?.trim().replace(/\s+/g, " ") ?? "";
-    if (!armed || !rawName) return;
-    const key = normalizeName(rawName);
-    const employee = employeesRef.current.find((item) => normalizeName(fullName(item)) === key || item.id === rawName);
-    const name = employee ? fullName(employee) : rawName;
-    if (sessionStorage.getItem(TRAP_HIT_KEY) !== key) {
-      sessionStorage.setItem(TRAP_HIT_KEY, key);
-      if (employee) {
-        const nextScore = Math.max(0, employee.awarenessScore - 15);
-        setEmployees((current) =>
-          current.map((item) =>
-            item.id === employee.id
-              ? {
-                  ...item,
-                  awarenessScore: nextScore,
-                  status: item.status === "Dondurulub" ? "Dondurulub" : "Nəzarətdə",
-                  lastTestResult: "Sınaq fişinq keçidini açdı",
-                  lastTestStatus: "ugursuz",
-                }
-              : item,
-          ),
-        );
+  const appliedTraining = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ingest = (live: boolean) => {
+      const fresh = readTrainingLog().filter((record) => !appliedTraining.current.has(record.id));
+      if (fresh.length === 0) return;
+      for (const record of fresh) appliedTraining.current.add(record.id);
+      setEmployees((current) => fresh.reduce(applyTrainingRecord, current));
+      setFeed((current) => {
+        const known = new Set(current.map((item) => item.id));
+        const additions = fresh.filter((record) => !known.has(record.id)).map(trainingFeedEvent);
+        return [...additions].reverse().concat(current).slice(0, 16);
+      });
+      if (!live) return;
+      for (const record of fresh) {
+        pushToast({
+          title: record.kind === "clicked" ? "Fişinq tələsi işə düşdü" : "Kiber-təlim tamamlandı",
+          message:
+            record.kind === "clicked"
+              ? `${record.employeeName} sınaq keçidini açdı. Bal 15 vahid azaldı.`
+              : `${record.employeeName} təlimi bitirdi. Bal 15 vahid bərpa olundu.`,
+          tone: record.kind === "clicked" ? "critical" : "success",
+        });
       }
-      pushFeed({
-        id: crypto.randomUUID(),
-        time: formatClock(new Date()),
-        title: `Tələyə düşdü: ${name} sınaq fişinq keçidini açdı`,
-        detail: employee
-          ? employee.status === "Dondurulub"
-            ? `${name} simulyasiya edilmiş fişinq keçidini açdı. Kiber-sayıqlıq balı 15 vahid azaldı. Hesab dondurulmuş vəziyyətdə qalır.`
-            : `${name} simulyasiya edilmiş fişinq keçidini açdı. Kiber-sayıqlıq balı 15 vahid azaldı və hesab nəzarətə alındı.`
-          : `${name} simulyasiya edilmiş fişinq keçidini açdı.`,
-        technical: "Keçid ?phish_trap=1 parametri ilə yerli təlim tələsinə düşdü. Kənar sayta yönləndirmə yoxdur.",
-        mitre: "T1566.002 — Spearphishing Link",
-        severity: "critical",
-        category: "Fişinq",
-        source: "user",
-      });
-      pushToast({
-        title: "Fişinq tələsi işə düşdü",
-        message: `${name} sınaq keçidini açdı.`,
-        tone: "critical",
-      });
-    }
-    const pending: PhishingTrap = { employeeId: employee?.id ?? null, employeeName: name };
-    sessionStorage.setItem(TRAP_PENDING_KEY, JSON.stringify(pending));
-    setPhishingTrap(pending);
-    setTab("insider");
-    const url = new URL(window.location.href);
-    url.searchParams.delete("phish_trap");
-    url.searchParams.delete("emp");
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [pushFeed, pushToast]);
+    };
+    ingest(false);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== TRAINING_LOG_KEY) return;
+      ingest(true);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [pushToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

@@ -90,7 +90,7 @@ export function parseAlert(input: unknown): AlertPayload {
 }
 
 function trapLink(alert: AlertPayload): string {
-  const url = new URL(alert.origin);
+  const url = new URL("/training", alert.origin);
   url.searchParams.set("phish_trap", "1");
   url.searchParams.set("emp", alert.employeeName);
   return url.toString();

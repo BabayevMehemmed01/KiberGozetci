@@ -50,6 +50,8 @@ export async function postSecurityAlert(alert: SecurityAlertInput, options?: { f
       body: JSON.stringify({
         ...alert,
         type: alert.type ?? "security_alert",
+        employeeName: (alert.employeeName || alert.targetEmployee).trim(),
+        targetEmployee: alert.targetEmployee.trim(),
         recipientEmail: settings.recipientEmail || DEFAULT_ALERT_EMAIL,
         timestamp: new Date().toLocaleString("az-AZ"),
         origin: window.location.origin,

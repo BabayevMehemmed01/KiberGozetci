@@ -50,9 +50,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SOC PARAMETRLƏRİ</p>
-                <h2 id="settings-title" className="mt-1 flex items-center gap-2 text-lg font-extrabold text-white">
-                  <Settings className="h-4 w-4 text-cyan-300" />
+                <p className="text-[11px] font-bold tracking-[0.16em] text-cyan-800 dark:text-cyan-300">SOC PARAMETRLƏRİ</p>
+                <h2 id="settings-title" className="mt-1 flex items-center gap-2 text-lg font-extrabold text-slate-900 dark:text-white">
+                  <Settings className="h-4 w-4 text-cyan-800 dark:text-cyan-300" />
                   Ayarlar
                 </h2>
               </div>
@@ -62,7 +62,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-white">İnterfeys teması</h3>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">İnterfeys teması</h3>
               <div className="grid gap-2">
                 {THEMES.map((item) => {
                   const selected = theme === item.id;
@@ -79,7 +79,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                     >
                       <span className={cn("h-9 w-9 shrink-0 rounded-full border-2", item.swatch)} />
                       <span>
-                        <span className="block text-sm font-semibold text-white">{item.title}</span>
+                        <span className="block text-sm font-semibold text-slate-900 dark:text-white">{item.title}</span>
                         <span className="block text-[11px] text-slate-400">{item.caption}</span>
                       </span>
                     </button>
@@ -90,8 +90,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
 
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-white">Kiber Divar həssaslıq həddi</h3>
-                <span className="font-mono text-sm font-bold text-cyan-300">{quarantineThreshold}%</span>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Kiber Divar həssaslıq həddi</h3>
+                <span className="font-mono text-sm font-bold text-cyan-800 dark:text-cyan-300">{quarantineThreshold}%</span>
               </div>
               <input
                 type="range"
@@ -110,8 +110,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
 
             <div className="mt-5 border-t border-[#1E293B] pt-5">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Mail className="h-4 w-4 text-cyan-300" />
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  <Mail className="h-4 w-4 text-cyan-800 dark:text-cyan-300" />
                   Avtomatik E-poçt Bildirişləri (Resend API)
                 </h3>
                 <button
@@ -119,12 +119,15 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                   role="switch"
                   aria-checked={mailAlertsEnabled}
                   onClick={() => setMailAlertsEnabled(!mailAlertsEnabled)}
-                  className={cn("relative h-6 w-11 shrink-0 rounded-full border", mailAlertsEnabled ? "border-cyan-400/70 bg-cyan-400/30" : "border-[#1E293B] bg-[#060B14]")}
+                  className={cn(
+                    "relative h-6 w-11 shrink-0 cursor-pointer rounded-full border",
+                    mailAlertsEnabled ? "border-cyan-800 bg-cyan-700 dark:border-cyan-400/70 dark:bg-cyan-400/30" : "border-slate-400 bg-slate-300 dark:border-slate-600 dark:bg-slate-800",
+                  )}
                 >
-                  <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", mailAlertsEnabled ? "left-6" : "left-0.5")} />
+                  <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform", mailAlertsEnabled ? "left-6" : "left-0.5")} />
                 </button>
               </div>
-              <label className="block text-xs font-semibold text-slate-300" htmlFor="alert-recipient">
+              <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300" htmlFor="alert-recipient">
                 Alıcı E-poçt Ünvanı
               </label>
               <input
@@ -147,11 +150,11 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                     setSendingTest(false);
                   });
                 }}
-                className="mt-3 w-full rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-60"
+                className="mt-3 w-full cursor-pointer rounded-xl border border-cyan-800/40 bg-cyan-800/10 px-3 py-2 text-sm font-semibold text-cyan-800 disabled:opacity-60 dark:border-cyan-400/40 dark:bg-cyan-400/10 dark:text-cyan-100"
               >
                 {sendingTest ? "Göndərilir..." : "Test Bildirişi Göndər"}
               </button>
-              {testNote ? <p className="mt-2 text-xs leading-5 text-cyan-200">{testNote}</p> : null}
+              {testNote ? <p className="mt-2 text-xs leading-5 text-cyan-800 dark:text-cyan-200">{testNote}</p> : null}
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 Test düyməsi fişinq tələsi məktubu göndərir. Karantin və hesabın dondurulması SOC hesabatı göndərir. Resend açarı yalnız server mühitində saxlanılır.
               </p>

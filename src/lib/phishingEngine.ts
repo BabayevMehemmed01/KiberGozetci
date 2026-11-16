@@ -121,6 +121,23 @@ const SIGNALS: Signal[] = [
   { phrase: "login", urgency: 8, theft: 18, style: 0, label: "login" },
   { phrase: "confirm", urgency: 10, theft: 12, style: 0, label: "confirm" },
   { phrase: "код", urgency: 6, theft: 24, style: 0, label: "код" },
+  { phrase: "pul yatir", urgency: 22, theft: 20, style: 8, label: "pul yatır" },
+  { phrase: "delete account", urgency: 24, theft: 14, style: 10, label: "delete account" },
+  { phrase: "ish teklifi", urgency: 18, theft: 10, style: 6, label: "iş təklifi" },
+  { phrase: "is teklifi", urgency: 18, theft: 10, style: 6, label: "iş təklifi" },
+  { phrase: "cv gonder", urgency: 18, theft: 12, style: 6, label: "CV göndər" },
+  { phrase: "bitcoin", urgency: 18, theft: 16, style: 6, label: "bitcoin" },
+  { phrase: "crypto", urgency: 18, theft: 14, style: 6, label: "crypto" },
+  { phrase: "invest", urgency: 16, theft: 12, style: 4, label: "invest" },
+  { phrase: "qazanc", urgency: 16, theft: 14, style: 6, label: "qazanc" },
+  { phrase: "bonus", urgency: 12, theft: 8, style: 4, label: "bonus" },
+  { phrase: "silinecek", urgency: 22, theft: 8, style: 10, label: "silinəcək" },
+  { phrase: "baglanacaq", urgency: 22, theft: 8, style: 10, label: "bağlanacaq" },
+  { phrase: "deaktiv", urgency: 18, theft: 8, style: 8, label: "deaktiv" },
+  { phrase: "terminate", urgency: 20, theft: 8, style: 8, label: "terminate" },
+  { phrase: "vakansiya", urgency: 16, theft: 10, style: 4, label: "vakansiya" },
+  { phrase: "interview", urgency: 12, theft: 8, style: 4, label: "interview" },
+  { phrase: "salary", urgency: 12, theft: 10, style: 4, label: "salary" },
 ];
 
 const UPPER_MAP: Record<string, string> = {
@@ -221,7 +238,12 @@ function matchAt(folded: string, index: number, phrase: string): boolean {
   if (phrase.length <= 3 && !PREFIX_ROOTS.has(phrase)) return false;
   const word = folded.slice(index, wordEnd(folded, index));
   if (phrase === "hesab" && word.startsWith("hesabat")) return false;
+  if (phrase === "invest" && !investWord(word)) return false;
   return true;
+}
+
+function investWord(word: string): boolean {
+  return word === "invest" || word.startsWith("investisi") || word.startsWith("investment") || word.startsWith("investor");
 }
 
 interface Hit {
@@ -795,6 +817,98 @@ function buildHighlights(text: string, markers: Marker[], extra: { start: number
   return parts;
 }
 
+type LureKind = "crypto" | "recruit" | "deletion";
+
+interface LureRoot {
+  phrase: string;
+  kind: LureKind;
+  label: string;
+}
+
+const LURE_ROOTS: LureRoot[] = [
+  { phrase: "pul yatir", kind: "crypto", label: "pul yatır" },
+  { phrase: "delete account", kind: "deletion", label: "delete account" },
+  { phrase: "ish teklifi", kind: "recruit", label: "iş təklifi" },
+  { phrase: "is teklifi", kind: "recruit", label: "iş təklifi" },
+  { phrase: "cv gonder", kind: "recruit", label: "CV göndər" },
+  { phrase: "bitcoin", kind: "crypto", label: "bitcoin" },
+  { phrase: "crypto", kind: "crypto", label: "crypto" },
+  { phrase: "invest", kind: "crypto", label: "invest" },
+  { phrase: "qazanc", kind: "crypto", label: "qazanc" },
+  { phrase: "bonus", kind: "crypto", label: "bonus" },
+  { phrase: "silinecek", kind: "deletion", label: "silinəcək" },
+  { phrase: "baglanacaq", kind: "deletion", label: "bağlanacaq" },
+  { phrase: "deaktiv", kind: "deletion", label: "deaktiv" },
+  { phrase: "terminate", kind: "deletion", label: "terminate" },
+  { phrase: "vakansiya", kind: "recruit", label: "vakansiya" },
+  { phrase: "interview", kind: "recruit", label: "interview" },
+  { phrase: "salary", kind: "recruit", label: "salary" },
+];
+
+function lureEnd(text: string, index: number, phrase: string): number | null {
+  if (!text.startsWith(phrase, index)) return null;
+  if (index > 0 && isLetter(text[index - 1])) return null;
+  if (phrase === "invest" && !investWord(text.slice(index, wordEnd(text, index)))) return null;
+  const base = index + phrase.length;
+  return isLetter(text[base]) ? wordEnd(text, base) : base;
+}
+
+function assessLures(text: string) {
+  const ordered = [...LURE_ROOTS].sort((left, right) => right.phrase.length - left.phrase.length);
+  const taken: { start: number; end: number }[] = [];
+  const hits: { kind: LureKind; label: string; phrase: string; start: number; end: number }[] = [];
+  for (const item of ordered) {
+    let from = 0;
+    while (from < text.length) {
+      const index = text.indexOf(item.phrase, from);
+      if (index < 0) break;
+      const end = lureEnd(text, index, item.phrase);
+      if (end !== null && !overlaps(taken, index, end)) {
+        taken.push({ start: index, end });
+        hits.push({ kind: item.kind, label: item.label, phrase: item.phrase, start: index, end });
+      }
+      from = index + Math.max(1, item.phrase.length);
+    }
+  }
+  const phrases = new Set(hits.map((hit) => hit.phrase));
+  const kinds = new Set(hits.map((hit) => hit.kind));
+  const cryptoStrong = ["bitcoin", "crypto", "pul yatir", "qazanc", "invest"].filter((phrase) => phrases.has(phrase)).length;
+  const recruitStrong = ["vakansiya", "ish teklifi", "is teklifi", "cv gonder"].filter((phrase) => phrases.has(phrase)).length;
+  const recruitWeak = ["interview", "salary"].filter((phrase) => phrases.has(phrase)).length;
+  let floor = 0;
+  if (cryptoStrong >= 2 || (cryptoStrong >= 1 && phrases.has("bonus"))) floor = 90;
+  else if (cryptoStrong === 1) floor = 78;
+  else if (phrases.has("bonus")) floor = 54;
+  if (kinds.has("deletion")) floor = Math.max(floor, 88);
+  if (recruitStrong >= 2 || phrases.has("cv gonder") || phrases.has("ish teklifi") || phrases.has("is teklifi")) floor = Math.max(floor, 86);
+  else if (recruitStrong === 1) floor = Math.max(floor, 74);
+  else if (recruitWeak >= 2) floor = Math.max(floor, 80);
+  else if (recruitWeak === 1) floor = Math.max(floor, 58);
+  if (kinds.size >= 2) floor = Math.max(floor, 90);
+  const intents: string[] = [];
+  if (kinds.has("crypto")) intents.push("Kripto, maliyyə piramidası və investisiya tələsi niyyəti aşkarlandı");
+  if (kinds.has("recruit")) intents.push("Saxta iş təklifi və CV tələsi niyyəti aşkarlandı");
+  if (kinds.has("deletion")) intents.push("Hədə-qorxu və hesabın silinməsi niyyəti aşkarlandı");
+  const techniques: AttackTechnique[] = [];
+  if (kinds.has("crypto")) techniques.push({ code: "T1204", name: "User Execution" });
+  if (kinds.has("crypto") && cryptoStrong >= 1) techniques.push({ code: "T1566", name: "Phishing" });
+  if (kinds.has("recruit")) {
+    techniques.push({ code: "T1566", name: "Phishing" });
+    techniques.push({ code: "T1204", name: "User Execution" });
+  }
+  if (kinds.has("deletion")) {
+    techniques.push({ code: "T1534", name: "Internal Spearphishing" });
+    techniques.push({ code: "T1566", name: "Phishing" });
+  }
+  return {
+    floor,
+    intents,
+    techniques,
+    spans: hits.map((hit) => ({ start: hit.start, end: hit.end })),
+    labels: [...new Set(hits.map((hit) => hit.label))],
+  };
+}
+
 export function analyzePhishing(text: string, url: string, threshold = 65): PhishingReport {
   const hits = findHits(text);
   const signals = uniqueSignals(hits);
@@ -827,20 +941,25 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   overall = clamp(Math.round(overall));
 
   const intent = intentProfile(signals, markers);
-  const wall = assessCyberWall(normalizeText(text), markers);
+  const normalized = normalizeText(text);
+  const wall = assessCyberWall(normalized, markers);
+  const lure = assessLures(normalized);
   if (domain.score >= 40) intent.intents.push("Saxta domen və ya şübhəli keçid aşkarlandı");
-  const intents = [...new Set([...wall.intents, ...intent.intents])];
-  if (intent.floor > 0 || wall.floor > 0) overall = clamp(Math.max(overall, intent.floor, wall.floor));
-  if (intent.floor >= 84 || wall.forced) {
+  const intents = [...new Set([...wall.intents, ...intent.intents, ...lure.intents])];
+  if (intent.floor > 0 || wall.floor > 0 || lure.floor > 0) overall = clamp(Math.max(overall, intent.floor, wall.floor, lure.floor));
+  if (intent.floor >= 84 || wall.forced || lure.floor >= 84) {
     urgency = clamp(Math.max(urgency, 64));
     theft = clamp(Math.max(theft, 58));
     if (intent.pressure >= 1 || wall.pressure >= 1) style = clamp(Math.max(style, 36));
   }
 
   const line = Math.min(85, Math.max(50, Math.round(Number.isFinite(threshold) ? threshold : 65)));
-  const critical = wall.forced || intent.floor >= 84 || overall >= 84;
-  const quarantine = wall.forced || intent.floor >= 84 || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
+  const critical = wall.forced || intent.floor >= 84 || lure.floor >= 84 || overall >= 84;
+  const quarantine = wall.forced || intent.floor >= 84 || lure.floor >= 84 || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
   const techniques = [...wall.techniques];
+  for (const technique of lure.techniques) {
+    if (!techniques.some((item) => item.code === technique.code)) techniques.push(technique);
+  }
   if (domain.score >= 40 && !techniques.some((item) => item.code === "T1566")) {
     techniques.push({ code: "T1566", name: "Phishing" });
   }
@@ -867,8 +986,8 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
     style,
     theft,
     quarantine,
-    highlights: buildHighlights(text, markers, wall.spans),
-    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels])],
+    highlights: buildHighlights(text, markers, [...wall.spans, ...lure.spans]),
+    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels])],
     findings,
     analyzedUrl: domain.analyzedUrl,
     intents,

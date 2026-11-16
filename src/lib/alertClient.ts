@@ -61,12 +61,15 @@ export async function postSecurityAlert(
         origin: window.location.origin,
       }),
     });
-    const data = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; recipient?: string; fallback?: boolean } | null;
+    const data = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; recipient?: string; fallback?: boolean; from?: string } | null;
     if (!response.ok || !data?.ok) {
       return { ok: false, skipped: false, message: data?.error || "E-poçt göndərilmədi." };
     }
     const recipient = data.recipient ?? recipientEmail;
-    const message = data.fallback ? `Bildiriş ehtiyat ünvana göndərildi: ${recipient}` : `Bildiriş göndərildi: ${recipient}`;
+    const sender = data.from || "onboarding@resend.dev";
+    const message = data.fallback
+      ? `Bildiriş ehtiyat ünvana göndərildi: ${recipient} (${sender})`
+      : `Bildiriş göndərildi: ${recipient} (${sender})`;
     return { ok: true, skipped: false, message };
   } catch {
     return { ok: false, skipped: false, message: "E-poçt xidmətinə qoşulmaq alınmadı." };

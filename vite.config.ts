@@ -57,7 +57,7 @@ async function handleAlert(req: IncomingMessage, res: ServerResponse) {
   try {
     const result = await deliverAlert(await readBody(req));
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, recipient: result.recipient, fallback: result.fallback }));
+    res.end(JSON.stringify({ ok: true, recipient: result.recipient, fallback: result.fallback, from: result.from }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "E-poçt göndərilmədi.";
     const clientError = message.includes("mütləqdir") || message.includes("düzgün deyil") || message.includes("oxunmadı") || message.includes("rəqəm");

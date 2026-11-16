@@ -156,7 +156,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               </button>
               {testNote ? <p className="mt-2 text-xs leading-5 text-cyan-800 dark:text-cyan-200">{testNote}</p> : null}
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                Test düyməsi fişinq tələsi məktubu göndərir. Karantin və hesabın dondurulması SOC hesabatı göndərir. Resend açarı yalnız server mühitində saxlanılır.
+                Bildirişlər aktiv olduqda test məktubu və fişinq tələsi eyni serverless Resend endpoint-indən, göndərən onboarding@resend.dev ünvanı ilə çıxır. Açar yalnız server mühitində saxlanılır.
               </p>
             </div>
           </motion.div>

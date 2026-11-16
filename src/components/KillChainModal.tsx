@@ -194,7 +194,7 @@ export function KillChainModal() {
     <AnimatePresence>
       {killOpen ? (
         <motion.div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/20 p-3 backdrop-blur-sm sm:p-6 dark:bg-slate-950/80 dark:backdrop-blur-md"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/45 p-3 sm:p-6 dark:bg-slate-950/80 dark:backdrop-blur-md"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -204,8 +204,8 @@ export function KillChainModal() {
         >
           <motion.div
             className={cn(
-              "scanlines relative max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-3xl border bg-slate-100/95 p-4 text-slate-900 shadow-2xl sm:p-6 dark:bg-slate-900/95 dark:text-slate-100",
-              active >= 2 ? "border-red-400/50" : "border-slate-300 dark:border-cyan-400/30",
+              "relative max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl sm:p-6 dark:border-cyan-400/30 dark:bg-slate-900/95 dark:text-slate-100",
+              active >= 2 && "border-red-300 dark:border-red-400/50",
             )}
             initial={{ y: 24, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
@@ -259,7 +259,7 @@ export function KillChainModal() {
               <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr]">
                 <div className="rounded-2xl border border-slate-300 bg-white p-4 dark:border-[#1E293B] dark:bg-[#0F172A]">
                   <div className="text-[11px] text-slate-500">{simPhase === "done" ? "TAMAMLANDI" : "CANLI TAYMER"}</div>
-                  <div className="mt-1 font-mono text-3xl text-cyan-200">{formatElapsed(elapsed)}</div>
+                  <div className="mt-1 font-mono text-3xl text-cyan-800 dark:text-cyan-200">{formatElapsed(elapsed)}</div>
                   <div className="mt-2 text-xs text-slate-400">Ssenari vaxtı {current.clock}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-300 bg-white p-4 dark:border-[#1E293B] dark:bg-[#0F172A]">
@@ -284,15 +284,15 @@ export function KillChainModal() {
                       key={item.clock}
                       className={cn(
                         "rounded-2xl border p-4 transition",
-                        state === "active" && "border-cyan-300/60 bg-cyan-400/10",
-                        state === "done" && "border-emerald-400/30 bg-emerald-400/5",
-                        state === "pending" && "border-[#1E293B] opacity-45",
-                        index === 3 && state === "active" && "border-red-400/70 bg-red-500/10",
+                        state === "active" && "border-cyan-700/35 bg-cyan-50 dark:border-cyan-300/60 dark:bg-cyan-400/10",
+                        state === "done" && "border-emerald-700/30 bg-emerald-50 dark:border-emerald-400/30 dark:bg-emerald-400/5",
+                        state === "pending" && "border-slate-200 bg-slate-50 dark:border-[#1E293B] dark:bg-slate-900/40",
+                        index === 3 && state === "active" && "border-red-300 bg-red-50 dark:border-red-400/70 dark:bg-red-500/10",
                       )}
                     >
                       <div className="flex items-center justify-between text-[11px] font-bold tracking-wide">
                         <span className="text-slate-400">MƏRHƏLƏ {index + 1}</span>
-                        <span className="font-mono text-cyan-200">{item.clock}</span>
+                        <span className="font-mono text-cyan-800 dark:text-cyan-200">{item.clock}</span>
                       </div>
                       <h3 className="mt-2 text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
                       <p className="mt-1 font-mono text-[11px] text-amber-200">{item.mitre}</p>

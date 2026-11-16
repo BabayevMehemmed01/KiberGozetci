@@ -1,5 +1,6 @@
 const RESEND_URL = "https://api.resend.com/emails";
-const FROM = "KiberGozetci SOC <onboarding@resend.dev>";
+const SENDER = "onboarding@resend.dev";
+const FROM = `KiberGozetci SOC <${SENDER}>`;
 const DEFAULT_RECEIVER = "birlik1020@gmail.com";
 const DEFAULT_ORIGIN = "https://kibergozetci.vercel.app";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -204,7 +205,7 @@ async function postResend(to: string, subject: string, html: string, text: strin
   return { ok: false, status: response.status, error: message || "Resend məktubu qəbul etmədi." };
 }
 
-export async function deliverAlert(input: unknown): Promise<{ recipient: string; fallback: boolean }> {
+export async function deliverAlert(input: unknown): Promise<{ recipient: string; fallback: boolean; from: string }> {
   const alert = parseAlert(input);
   const subject = alert.type === "phishing_trap" ? `Təcili: ${alert.employeeName} hesabının təsdiqi` : `KiberGözətçi: ${alert.alertType} — ${alert.riskScore}/100`;
   const html = alert.type === "phishing_trap" ? trapHtml(alert) : reportHtml(alert);
@@ -212,12 +213,12 @@ export async function deliverAlert(input: unknown): Promise<{ recipient: string;
   const requested = alert.recipientEmail;
   const backup = fallbackReceiver();
   const first = await postResend(requested, subject, html, text);
-  if (first.ok) return { recipient: requested, fallback: false };
+  if (first.ok) return { recipient: requested, fallback: false, from: SENDER };
   const domainLimited = first.status === 403 && requested.toLowerCase() !== backup.toLowerCase();
   if (!domainLimited) throw new Error(first.error);
   const second = await postResend(backup, subject, html, text);
   if (!second.ok) throw new Error(second.error);
-  return { recipient: backup, fallback: true };
+  return { recipient: backup, fallback: true, from: SENDER };
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -227,7 +228,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   }
   try {
     const result = await deliverAlert(req.body);
-    res.status(200).json({ ok: true, recipient: result.recipient, fallback: result.fallback });
+    res.status(200).json({ ok: true, recipient: result.recipient, fallback: result.fallback, from: result.from });
   } catch (error) {
     const message = error instanceof Error ? error.message : "E-poçt göndərilmədi.";
     const clientError = message.includes("mütləqdir") || message.includes("düzgün deyil") || message.includes("oxunmadı") || message.includes("rəqəm");

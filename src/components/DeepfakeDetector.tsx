@@ -5,8 +5,11 @@ import type { VoiceSample } from "../types.ts";
 import { decodeToMono } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
+import { inspectImageFile, inspectVideoFrame, type StillForensics } from "../lib/vision.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
+import { SpectrogramCanvas } from "./SpectrogramCanvas.tsx";
+import { VisionPanel } from "./VisionPanel.tsx";
 import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Meter, Panel } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
@@ -19,8 +22,12 @@ export function DeepfakeDetector() {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
   const [samples, setSamples] = useState<Float32Array | null>(null);
+  const [sampleRate, setSampleRate] = useState(48000);
   const [report, setReport] = useState<AcousticReport | null>(null);
   const [video, setVideo] = useState<VideoForensics | null>(null);
+  const [still, setStill] = useState<StillForensics | null>(null);
+  const [mediaKind, setMediaKind] = useState<"idle" | "audio" | "image" | "video">("idle");
+  const [mediaUrl, setMediaUrl] = useState("");
   const [playing, setPlaying] = useState(false);
   const [recording, setRecording] = useState(false);
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
@@ -32,6 +39,13 @@ export function DeepfakeDetector() {
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const previewRef = useRef<string | null>(null);
+
+  function rememberPreview(url: string | null) {
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    previewRef.current = url;
+    setMediaUrl(url ?? "");
+  }
 
   function ensureGraph() {
     if (!contextRef.current) contextRef.current = new AudioContext();
@@ -83,6 +97,7 @@ export function DeepfakeDetector() {
     () => () => {
       stopPlayback();
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
     },
     [],
   );
@@ -92,6 +107,7 @@ export function DeepfakeDetector() {
     setError("");
     setReport(null);
     setVideo(null);
+    setStill(null);
     const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name)));
     try {
       const context = ensureGraph();
@@ -100,20 +116,38 @@ export function DeepfakeDetector() {
       const slice = decoded.samples.subarray(0, limit);
       const nextReport = analyzePcm(slice, decoded.sampleRate);
       const lip = videoFile && file ? await estimateLipSync(file, slice, decoded.sampleRate) : null;
+      const frame = videoFile && file ? await inspectVideoFrame(file) : null;
+      if (videoFile && file) {
+        rememberPreview(URL.createObjectURL(file));
+        setMediaKind("video");
+      } else {
+        rememberPreview(null);
+        setMediaKind("audio");
+      }
       setSamples(slice);
+      setSampleRate(decoded.sampleRate);
       setBuffer(decoded.buffer);
       setReport(nextReport);
       setVideo(lip);
+      setStill(frame);
       setLabel(nextLabel);
-      play(decoded.buffer);
+      try {
+        play(decoded.buffer);
+      } catch {
+        setPlaying(false);
+      }
     } catch {
       if (videoFile && file) {
         const lip = await estimateLipSync(file, null, 0);
+        const frame = await inspectVideoFrame(file);
+        rememberPreview(URL.createObjectURL(file));
+        setMediaKind("video");
         setVideo(lip);
+        setStill(frame);
         setLabel(nextLabel);
         setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
       } else {
-        setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG və ya MP4 formatında yenidən cəhd edin.");
+        setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG, MP4, JPG və ya PNG formatında yenidən cəhd edin.");
       }
     } finally {
       setLoading(false);
@@ -134,10 +168,37 @@ export function DeepfakeDetector() {
     }
   }
 
+  async function loadStill(file: File) {
+    stopPlayback();
+    setPlaying(false);
+    setLoading(true);
+    setError("");
+    setReport(null);
+    setVideo(null);
+    setSamples(null);
+    setBuffer(null);
+    try {
+      const result = await inspectImageFile(file);
+      rememberPreview(result.url);
+      setMediaKind("image");
+      setStill(result.forensics);
+      setLabel(file.name);
+    } catch {
+      setError("Şəkil kadrı oxunmadı. JPG, PNG və ya WEBP seçin.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function loadFile(file: File) {
+    const image = /\.(jpe?g|png|webp)$/i.test(file.name) || file.type.startsWith("image/");
+    if (image) {
+      await loadStill(file);
+      return;
+    }
     const allowed = /\.(wav|mp3|ogg|mp4|webm)$/i.test(file.name) || file.type.startsWith("audio/") || file.type.startsWith("video/");
     if (!allowed) {
-      setError("Yalnız WAV, MP3, OGG, MP4 və WEBM faylları qəbul edilir.");
+      setError("Yalnız WAV, MP3, OGG, MP4, WEBM, JPG, PNG və WEBP faylları qəbul edilir.");
       return;
     }
     ensureGraph();
@@ -186,6 +247,12 @@ export function DeepfakeDetector() {
   }
 
   const verdict = report ? verdictFor(report) : null;
+  const cvScore = video && still ? Math.round(video.lipSync * 0.7 + still.score * 0.3) : video ? video.lipSync : still ? still.score : null;
+  const cvHint = still
+    ? `Laplasian dispersiya ${Math.round(still.variance)} · GAN hamarlığı ${still.smoothness}% · piksel uyğunluğu ${still.score}%`
+    : video
+      ? `Kadr sinxronu ${video.lipSync}% · hamarlıq ${video.smoothness}% · titrəmə ${video.flicker}%`
+      : "Video və ya şəkil yoxdur — CV göstəricisi gözləyir";
   const verdictClass =
     verdict?.tone === "critical"
       ? "border-red-400/40 bg-red-500/10 text-red-100"
@@ -258,7 +325,7 @@ export function DeepfakeDetector() {
             <div>
               <Upload className="mx-auto mb-3 h-7 w-7 text-cyan-300" />
               <div className="text-sm font-semibold text-slate-100">Faylı buraya sürükləyin</div>
-              <p className="mt-1 text-xs text-slate-500">WAV, MP3, OGG və ya MP4. WEBM də qəbul edilir. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
+              <p className="mt-1 text-xs text-slate-500">WAV, MP3, OGG, MP4, WEBM, JPG, PNG və ya WEBP. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
             </div>
           </button>
           <button
@@ -279,7 +346,7 @@ export function DeepfakeDetector() {
           <input
             ref={fileRef}
             type="file"
-            accept=".ogg,.mp3,.wav,.mp4,.webm,audio/*,video/*"
+            accept=".ogg,.mp3,.wav,.mp4,.webm,.jpg,.jpeg,.png,.webp,audio/*,video/*,image/*"
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -310,12 +377,30 @@ export function DeepfakeDetector() {
             {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {playing ? "Dayandır" : "Yenidən dinlə"}
           </button>
+          <div className="mt-4">
+            <SpectrogramCanvas samples={samples} sampleRate={sampleRate} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
+          </div>
+          <div className="mt-4">
+            <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} />
+          </div>
         </Panel>
 
         <Panel>
-          {!report || !verdict ? (
+          {!report && still ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-3 text-cyan-50">
+                <div className="text-[11px] font-bold tracking-[0.16em]">CV PİKSEL ANALİZİ</div>
+                <div className="mt-1 font-mono text-4xl font-semibold">{still.score}%</div>
+                <div className="mt-1 text-sm font-bold">Üz və dəri hamarlığı ölçüldü</div>
+              </div>
+              <Meter label="Dodaq/səs və CV piksel uyğunluğu" value={still.score} intent="safe" hint={cvHint} />
+              <p className="text-xs leading-5 text-slate-400">
+                Laplasian dispersiya {Math.round(still.variance)} və {still.smoothness}% hamar hüceyrə GAN artefakt torunda işarələnib. Səs izi üçün eyni kadra video əlavə edin.
+              </p>
+            </div>
+          ) : !report || !verdict ? (
             <div className="grid min-h-[320px] place-items-center text-center text-sm text-slate-400">
-              Nümunə seçin və ya səs faylı yükləyin. Analiz zamanı spektr və dalğa canlanır.
+              Nümunə seçin və ya səs, video, şəkil faylı yükləyin. Analiz zamanı spektr və dalğa canlanır.
             </div>
           ) : (
             <div className="space-y-4">
@@ -329,12 +414,7 @@ export function DeepfakeDetector() {
               <Meter label="Səs sintez izləri (Vocoder)" value={report.vocoder} intent="risk" hint="Təmiz harmonik sıra və robotik sabitlik" />
               <Meter label="Təbii nəfəs fasilələri" value={report.breathNatural} intent="safe" hint="Danışıq arasındakı səssizlik və nəfəs" />
               <Meter label="Tezlik spektri anomaliyası" value={report.spectrumAnomaly} intent="risk" hint="Ton və ucalığın süni sabitliyi" />
-              <Meter
-                label="Dodaq/səs uyğunluğu"
-                value={video ? video.lipSync : null}
-                intent="safe"
-                hint={video ? `Kadr sinxronu ${video.lipSync}% · hamarlıq ${video.smoothness}% · titrəmə ${video.flicker}%` : "Video kadrı yoxdur — göstərici hesablanmayıb"}
-              />
+              <Meter label="Dodaq/səs və CV piksel uyğunluğu" value={cvScore} intent="safe" hint={cvHint} />
               <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                 <Metric label="RMS variasiyası" value={report.metrics.amplitudeVariation.toFixed(2)} />
                 <Metric label="ZCR dəyişkənliyi" value={report.metrics.zcrVariation.toFixed(3)} />
@@ -418,7 +498,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function describe(_report: AcousticReport, clip: VideoForensics | null): string[] {
-  if (!clip) return ["Video kadrı yoxdur — dodaq və səs uyğunluğu hesablanmayıb."];
+  if (!clip) return ["Video və ya şəkil yoxdur — CV piksel uyğunluğu gözləyir."];
   const lines: string[] = [];
   lines.push(
     clip.lipSync >= 65

@@ -16,6 +16,7 @@ export interface PhishingReport {
   matchedTerms: string[];
   findings: string[];
   analyzedUrl: string;
+  intents: string[];
 }
 
 interface Signal {
@@ -70,6 +71,49 @@ const SIGNALS: Signal[] = [
   { phrase: "şifrə", urgency: 8, theft: 32, style: 0, label: "şifrə" },
   { phrase: "parol", urgency: 8, theft: 32, style: 0, label: "parol" },
   { phrase: "otp", urgency: 8, theft: 30, style: 0, label: "OTP" },
+  { phrase: "pul", urgency: 10, theft: 16, style: 0, label: "pul" },
+  { phrase: "kocur", urgency: 12, theft: 18, style: 0, label: "köçürmə" },
+  { phrase: "kart", urgency: 8, theft: 20, style: 0, label: "kart" },
+  { phrase: "hesab", urgency: 8, theft: 14, style: 0, label: "hesab" },
+  { phrase: "iban", urgency: 6, theft: 22, style: 0, label: "IBAN" },
+  { phrase: "bank", urgency: 8, theft: 14, style: 0, label: "bank" },
+  { phrase: "dollar", urgency: 8, theft: 16, style: 0, label: "dollar" },
+  { phrase: "manat", urgency: 8, theft: 14, style: 0, label: "manat" },
+  { phrase: "azn", urgency: 8, theft: 12, style: 0, label: "AZN" },
+  { phrase: "usd", urgency: 8, theft: 12, style: 0, label: "USD" },
+  { phrase: "pay", urgency: 10, theft: 12, style: 0, label: "pay" },
+  { phrase: "wire", urgency: 12, theft: 14, style: 0, label: "wire" },
+  { phrase: "send", urgency: 10, theft: 12, style: 0, label: "send" },
+  { phrase: "money", urgency: 10, theft: 16, style: 0, label: "money" },
+  { phrase: "account", urgency: 8, theft: 16, style: 0, label: "account" },
+  { phrase: "transfer", urgency: 12, theft: 16, style: 0, label: "transfer" },
+  { phrase: "cash", urgency: 8, theft: 12, style: 0, label: "cash" },
+  { phrase: "para", urgency: 10, theft: 14, style: 0, label: "para" },
+  { phrase: "gonder", urgency: 10, theft: 14, style: 0, label: "göndər" },
+  { phrase: "деньги", urgency: 10, theft: 16, style: 0, label: "деньги" },
+  { phrase: "карт", urgency: 8, theft: 16, style: 0, label: "карт" },
+  { phrase: "счет", urgency: 8, theft: 14, style: 0, label: "счет" },
+  { phrase: "счёт", urgency: 8, theft: 14, style: 0, label: "счёт" },
+  { phrase: "tez", urgency: 16, theft: 0, style: 4, label: "tez" },
+  { phrase: "tecili", urgency: 16, theft: 0, style: 0, label: "təcili" },
+  { phrase: "derhal", urgency: 14, theft: 0, style: 0, label: "dərhal" },
+  { phrase: "pls", urgency: 14, theft: 0, style: 8, label: "pls" },
+  { phrase: "please", urgency: 10, theft: 0, style: 4, label: "please" },
+  { phrase: "asap", urgency: 16, theft: 0, style: 6, label: "asap" },
+  { phrase: "now", urgency: 12, theft: 0, style: 0, label: "now" },
+  { phrase: "cerime", urgency: 16, theft: 0, style: 8, label: "cərimə" },
+  { phrase: "serefsiz", urgency: 8, theft: 0, style: 28, label: "şərəfsiz" },
+  { phrase: "mehkeme", urgency: 14, theft: 0, style: 12, label: "məhkəmə" },
+  { phrase: "polis", urgency: 14, theft: 0, style: 10, label: "polis" },
+  { phrase: "hebs", urgency: 16, theft: 0, style: 12, label: "həbs" },
+  { phrase: "kod", urgency: 6, theft: 24, style: 0, label: "kod" },
+  { phrase: "sifre", urgency: 6, theft: 30, style: 0, label: "şifrə" },
+  { phrase: "pin", urgency: 6, theft: 28, style: 0, label: "PIN" },
+  { phrase: "cvv", urgency: 4, theft: 34, style: 0, label: "CVV" },
+  { phrase: "verify", urgency: 12, theft: 16, style: 0, label: "verify" },
+  { phrase: "login", urgency: 8, theft: 18, style: 0, label: "login" },
+  { phrase: "confirm", urgency: 10, theft: 12, style: 0, label: "confirm" },
+  { phrase: "код", urgency: 6, theft: 24, style: 0, label: "код" },
 ];
 
 const UPPER_MAP: Record<string, string> = {
@@ -99,22 +143,77 @@ export function foldAz(value: string): string {
   return folded;
 }
 
+const LATIN_STRIP: Record<string, string> = {
+  ə: "e",
+  ş: "s",
+  ç: "c",
+  ğ: "g",
+  ö: "o",
+  ü: "u",
+  ı: "i",
+};
+
+export function normalizeText(value: string): string {
+  const folded = foldAz(value);
+  let normalized = "";
+  for (const char of folded) normalized += LATIN_STRIP[char] ?? char;
+  return normalized;
+}
+
 const ORDERED = [...SIGNALS]
-  .map((signal) => ({ ...signal, phrase: foldAz(signal.phrase) }))
+  .map((signal) => ({ ...signal, phrase: normalizeText(signal.phrase) }))
   .sort((a, b) => b.phrase.length - a.phrase.length);
+
+const PREFIX_ROOTS = new Set([
+  "kocur",
+  "kart",
+  "hesab",
+  "dollar",
+  "manat",
+  "send",
+  "money",
+  "account",
+  "transfer",
+  "gonder",
+  "para",
+  "wire",
+  "cash",
+  "bank",
+  "serefsiz",
+  "cerime",
+  "mehkeme",
+  "sifre",
+  "parol",
+  "verify",
+  "login",
+  "confirm",
+  "pul",
+  "tez",
+  "pay",
+  "kod",
+  "otp",
+  "tecili",
+]);
 
 function isLetter(char: string | undefined): boolean {
   if (!char) return false;
   return /\p{L}/u.test(char);
 }
 
+function wordEnd(folded: string, index: number): number {
+  let end = index;
+  while (end < folded.length && isLetter(folded[end])) end += 1;
+  return end;
+}
+
 function matchAt(folded: string, index: number, phrase: string): boolean {
   if (!folded.startsWith(phrase, index)) return false;
   if (index > 0 && isLetter(folded[index - 1])) return false;
-  if (phrase.length <= 3) {
-    const next = folded[index + phrase.length];
-    if (isLetter(next)) return false;
-  }
+  const next = folded[index + phrase.length];
+  if (!isLetter(next)) return true;
+  if (phrase.length <= 3 && !PREFIX_ROOTS.has(phrase)) return false;
+  const word = folded.slice(index, wordEnd(folded, index));
+  if (phrase === "hesab" && word.startsWith("hesabat")) return false;
   return true;
 }
 
@@ -125,7 +224,7 @@ interface Hit {
 }
 
 function findHits(text: string): Hit[] {
-  const folded = foldAz(text);
+  const folded = normalizeText(text);
   const hits: Hit[] = [];
   let index = 0;
   while (index < folded.length) {
@@ -134,8 +233,9 @@ function findHits(text: string): Hit[] {
       index += 1;
       continue;
     }
-    hits.push({ signal, start: index, end: index + signal.phrase.length });
-    index += signal.phrase.length;
+    const end = isLetter(folded[index + signal.phrase.length]) ? wordEnd(folded, index) : index + signal.phrase.length;
+    hits.push({ signal, start: index, end });
+    index = Math.max(index + 1, end);
   }
   return hits;
 }
@@ -168,7 +268,7 @@ function uniqueSignals(hits: Hit[]): Signal[] {
 const SUSPICIOUS_HOST =
   /teyid|login|secure|update|kocurme|kuryer|sifre|parol|otp|verify|blok|hesab-yenile|account|wire|password|bezopas/;
 const BRAND_HOST = /vergi|bank|gov|asan|maliyye|edovlet|kapital/;
-const BAD_TLD = /\.(xyz|top|tk|gq|ml|cf|click|zip|rest|cam|buzz|quest)$/i;
+const BAD_TLD = /\.(xyz|top|tk|gq|ml|cf|click|info|zip|rest|cam|buzz|quest)$/i;
 const SHORTENER = /^(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly|rb\.gy|tiny\.cc)$/i;
 
 function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; analyzedUrl: string } {
@@ -254,7 +354,7 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
 }
 
 const URL_IN_TEXT =
-  /(?:https?:\/\/|www\.)[^\s<>"')\]]+|bit\.ly\/[^\s<>"')\]]+|t\.co\/[^\s<>"')\]]+|(?:[a-z0-9-]+\.)+(?:xyz|top|click|tk|gq|ml|cf|zip|rest|buzz|quest)(?:\/[^\s<>"')\]]*)?/gi;
+  /(?:https?:\/\/|www\.)[^\s<>"')\]]+|bit\.ly\/[^\s<>"')\]]+|t\.co\/[^\s<>"')\]]+|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+(?:xyz|top|click|info|tk|gq|ml|cf|zip|rest|buzz|quest)(?:\/[^\s<>"')\]]*)?/gi;
 
 function collectUrls(text: string, url: string): string[] {
   const found: string[] = [];
@@ -310,7 +410,48 @@ function findMarkers(text: string): Marker[] {
     if (match.index === undefined) continue;
     markers.push({ start: match.index, end: match.index + match[0].length, label: "OTP kod tələbi", theft: 18, style: 0 });
   }
+  const normalized = normalizeText(text);
+  const amountPattern = /\d+\s*(?:dollar|usd|azn|manat|tl|rub|\$|€)/gi;
+  for (const match of normalized.matchAll(amountPattern)) {
+    if (match.index === undefined) continue;
+    markers.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      label: "məbləğ və valyuta",
+      theft: 8,
+      style: 0,
+    });
+  }
   return markers;
+}
+
+const MONEY_ROOT = /pul|kocur|kart|hesab|iban|bank|dollar|manat|azn|usd|send|money|account|transfer|pay|cash|wire|para|gonder|перевод|карт|счет|счёт|деньг/;
+const PRESSURE_ROOT = /tez|tecili|derhal|pls|please|asap|urgent|immediately|now|срочно|acil|hemen|bloklan|cerime|serefsiz|mehkeme|polis|hebs/;
+const THEFT_ROOT = /kod|otp|sifre|parol|pin|cvv|verify|login|confirm|код|парол/;
+
+function intentProfile(signals: Signal[], markers: Marker[]) {
+  let money = 0;
+  let pressure = 0;
+  let theft = 0;
+  for (const signal of signals) {
+    const phrase = signal.phrase;
+    if (MONEY_ROOT.test(phrase)) money += 1;
+    if (PRESSURE_ROOT.test(phrase)) pressure += 1;
+    if (THEFT_ROOT.test(phrase)) theft += 1;
+  }
+  const amount = markers.some((marker) => marker.label === "məbləğ və valyuta");
+  const moneyRequest = money >= 2 || (money >= 1 && amount);
+  const intents: string[] = [];
+  let floor = 0;
+  if (moneyRequest) {
+    floor = 74 + Math.min(14, money * 3 + (amount ? 5 : 0) + pressure * 2);
+    if (pressure >= 1 && money >= 1) floor = Math.max(floor, 80);
+    floor = Math.min(88, Math.max(72, floor));
+    intents.push("Maliyyə / Kart Köçürmə Tələbi Niyyəti Aşkarlandı");
+  }
+  if (pressure >= 1) intents.push("Tələskənlik, təzyiq və aqressiya niyyəti aşkarlandı");
+  if (theft >= 1) intents.push("Məlumat və OTP oğurluğu niyyəti aşkarlandı");
+  return { money, pressure, theft, amount, floor, intents };
 }
 
 function styleExtras(text: string, folded: string, urgency: number): { score: number; reasons: string[] } {
@@ -398,8 +539,18 @@ export function analyzePhishing(text: string, url: string): PhishingReport {
   if (text.trim().length < 12 && domain.score >= 50) overall = Math.max(overall, domain.score * 0.8);
   overall = clamp(Math.round(overall));
 
+  const intent = intentProfile(signals, markers);
+  if (domain.score >= 40) intent.intents.push("Saxta domen və ya şübhəli keçid aşkarlandı");
+  if (intent.floor > 0) overall = clamp(Math.max(overall, intent.floor));
+  if (intent.floor >= 72) {
+    urgency = clamp(Math.max(urgency, 64));
+    theft = clamp(Math.max(theft, 58));
+    if (intent.pressure >= 1) style = clamp(Math.max(style, 36));
+  }
+
   const quarantine = overall >= 70 ? "alindi" : overall >= 40 ? "nezaret" : "tehlukesiz";
   const findings = [
+    ...intent.intents,
     ...signals.map((signal) => `Təzyiq və ya oğurluq sözü: «${signal.label}».`),
     ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
     ...domain.reasons,
@@ -420,5 +571,6 @@ export function analyzePhishing(text: string, url: string): PhishingReport {
     matchedTerms: [...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label)],
     findings,
     analyzedUrl: domain.analyzedUrl,
+    intents: intent.intents,
   };
 }

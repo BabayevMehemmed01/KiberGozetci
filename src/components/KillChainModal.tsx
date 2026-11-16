@@ -1,64 +1,53 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RotateCcw, Volume2, VolumeX, X } from "lucide-react";
-import { RASHAD_ID } from "../data/mockData.ts";
-import { getBreach } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
+import { rollScenario, type AttackScenario } from "../lib/scenario.ts";
 import { playStageCue, stopTones } from "../lib/tones.ts";
 import { cn, fullName } from "../lib/utils.ts";
 import type { Employee } from "../types.ts";
 
-function attackIp(employee: Employee): string {
-  if (employee.id === RASHAD_ID) return "185.203.44.19";
-  let hash = 0;
-  for (const char of employee.id) hash = (hash * 33 + char.charCodeAt(0)) >>> 0;
-  return `185.203.${(hash % 40) + 10}.${(hash % 200) + 20}`;
-}
-
-function buildStages(employee: Employee) {
+function buildStages(employee: Employee, scenario: AttackScenario) {
   const name = fullName(employee);
-  const ip = attackIp(employee);
   const limit = employee.avgDailyDownloads;
-  const story = getBreach(employee.id);
-  const clock = `${String(story.hour).padStart(2, "0")}:${String(story.minute).padStart(2, "0")}`;
-  const files = story.files.toLocaleString("az-AZ");
+  const files = scenario.files.toLocaleString("az-AZ");
+  const opening = scenario.title.includes("səsi") ? "T1656 — Impersonation / Deepfake" : "T1566.002 — Spearphishing Link";
   return [
     {
       clock: "00:01",
       title: "Çoxkanallı hücum başlayır",
-      risk: 89,
-      mitre: "T1566.002 — Spearphishing Link",
-      detail: `${employee.department} şöbəsinin əməkdaşı ${name} üçün saxta bildiriş və klonlanmış səs mesajı gəlir. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə linkə klikləyir.`,
+      risk: scenario.risks[0],
+      mitre: opening,
+      detail: `${employee.department} şöbəsinin əməkdaşı ${name} üçün tələ: ${scenario.bait}. Sistem hər iki təhlükəni qeydə alır, lakin əməkdaş tələskənliklə keçidə klikləyir.`,
       logs: [
-        `QAT 1 · Fişinq mühərriki ${name} üçün saxta bildirişi qeydə aldı. T1566.002.`,
-        "QAT 2 · Dipfeyk detektoru klonlanmış səsi aşkarladı. T1656.",
-        `${name} keçidə kliklədi. Risk: 89%.`,
+        `QAT 1 · ${scenario.title}. Hədəf: ${name}.`,
+        `${name} keçidə kliklədi. Risk: ${scenario.risks[0]}%.`,
       ],
     },
     {
       clock: "00:04",
       title: "Hesab ələ keçirilir",
-      risk: 93,
+      risk: scenario.risks[1],
       mitre: "T1078 — Valid Accounts",
-      detail: `Haker oğurlanmış şifrə ilə saat ${clock}-da ${ip} ünvanından ${employee.email} hesabına sızır.`,
-      logs: [`Xarici IP ${ip} saat ${clock}-da ${name} sessiyasını (${employee.email}) açdı.`],
+      detail: `Haker oğurlanmış şifrə ilə saat ${scenario.clock}-da ${scenario.ip} ünvanından ${employee.email} hesabına sızır.`,
+      logs: [`Xarici IP ${scenario.ip} saat ${scenario.clock}-da ${name} sessiyasını (${employee.email}) açdı. Risk: ${scenario.risks[1]}%.`],
     },
     {
       clock: "00:07",
       title: "Daxili davranış anomaliyası",
-      risk: 97,
-      mitre: story.mitre,
-      detail: `${story.title}. ${files} fayl çıxarılır. Normal limit: ${limit} fayl/gün.`,
-      logs: [`QAT 3 · ${clock}-da ${files} fayl ixrac olunur. Norma: ${limit} fayl/gün. ${story.mitre}.`],
+      risk: scenario.risks[2],
+      mitre: scenario.mitre,
+      detail: `${scenario.title}. Saat ${scenario.clock}-da ${files} fayl çıxarılır. Normal limit: ${limit} fayl/gün.`,
+      logs: [`QAT 3 · ${scenario.clock}-da ${files} fayl ixrac olunur. Norma: ${limit} fayl/gün. ${scenario.mitre}. Risk: ${scenario.risks[2]}%.`],
     },
     {
       clock: "00:09",
       title: "Zəncirvari əlaqələndirmə və avtomatik bloklama",
-      risk: 99,
+      risk: scenario.risks[3],
       mitre: "T1078 — Valid Accounts",
-      detail: `KiberGözətçi üç qatı birləşdirir. Vahid risk balı 99/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
+      detail: `KiberGözətçi üç qatı birləşdirir. Vahid risk balı ${scenario.risks[3]}/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
       logs: [
-        "Üç qat birləşdirildi. Vahid risk balı: 99/100 (KRİTİK).",
+        `Üç qat birləşdirildi. Vahid risk balı: ${scenario.risks[3]}/100 (KRİTİK).`,
         `${name} hesabı donduruldu. İxrac dayandı. İdarəetmə panelindəki say yeniləndi.`,
       ],
     },
@@ -69,7 +58,7 @@ function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function downloadIncident(employee: Employee, stages: ReturnType<typeof buildStages>, ip: string) {
+function downloadIncident(employee: Employee, stages: ReturnType<typeof buildStages>, scenario: AttackScenario) {
   const name = fullName(employee);
   const rows = stages
     .map(
@@ -95,7 +84,8 @@ function downloadIncident(employee: Employee, stages: ReturnType<typeof buildSta
 <body>
   <h1>KiberGözətçi — kiber-insident hesabatı</h1>
   <p>Hədəf: ${escapeHtml(name)} · ${escapeHtml(employee.position)} · ${escapeHtml(employee.department)}</p>
-  <p>Hesab: ${escapeHtml(employee.email)} · Hücum IP: ${escapeHtml(ip)} · Vahid risk: 99/100 (KRİTİK)</p>
+  <p>Hesab: ${escapeHtml(employee.email)} · Hücum IP: ${escapeHtml(scenario.ip)} · Gecə vaxtı: ${escapeHtml(scenario.clock)} · Sızdırılan fayl: ${scenario.files.toLocaleString("az-AZ")}</p>
+  <p>Tələ: ${escapeHtml(scenario.title)} · Vahid risk: ${scenario.risks[3]}/100 (KRİTİK)</p>
   <p>Tədbir: hesab donduruldu, ixrac dayandırıldı, sessiya bağlandı.</p>
   <table>
     <thead><tr><th>Vaxt</th><th>Mərhələ</th><th>MITRE ATT&CK</th><th>Risk</th><th>Təfərrüat</th></tr></thead>
@@ -123,7 +113,12 @@ function formatElapsed(ms: number): string {
 export function KillChainModal() {
   const { killOpen, closeKillChain, killToken, simPhase, replayKillChain, applySimulationLock, updatePhase, employees, targetEmployeeId, setTargetEmployeeId } = useSoc();
   const target = employees.find((employee) => employee.id === targetEmployeeId) ?? employees[0];
-  const stages = useMemo(() => buildStages(target), [target]);
+  const rolledRef = useRef<{ token: number; scenario: AttackScenario } | null>(null);
+  if (!rolledRef.current || rolledRef.current.token !== killToken) {
+    rolledRef.current = { token: killToken, scenario: rollScenario(target.department) };
+  }
+  const scenario = rolledRef.current.scenario;
+  const stages = useMemo(() => buildStages(target, scenario), [target, scenario]);
   const [elapsed, setElapsed] = useState(0);
   const [stage, setStage] = useState(-1);
   const [soundOn, setSoundOn] = useState(true);
@@ -210,6 +205,9 @@ export function KillChainModal() {
                 <div>
                   <p className="text-[11px] font-bold tracking-[0.18em] text-red-300">CANLI HÜCUM ZƏNCİRİ</p>
                   <h2 id="kill-title" className="mt-1 text-2xl font-extrabold text-white">Zəncirvari hücum simulyasiyası</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    {scenario.title} · {scenario.ip} · {scenario.clock} · {scenario.files.toLocaleString("az-AZ")} fayl
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -302,7 +300,7 @@ export function KillChainModal() {
                 <button
                   type="button"
                   disabled={simPhase !== "done"}
-                  onClick={() => downloadIncident(target, stages, attackIp(target))}
+                  onClick={() => downloadIncident(target, stages, scenario)}
                   className="rounded-xl border border-amber-300/40 px-4 py-2.5 text-sm font-bold text-amber-100 disabled:opacity-40"
                 >
                   Kiber-İnsident Hesabatını Yüklə

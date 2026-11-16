@@ -144,6 +144,7 @@ export function PhishingAnalyzer() {
                       ]
                 }
                 steps={[
+                  ...(report.intents.length > 0 ? report.intents : ["Semantik niyyət tapılmadı. Mətn rəsmi və ya neytral görünür."]),
                   `Təcililik balı ${report.urgency} ümumi riskə 36% çəki ilə daxil olur.`,
                   `Domen balı ${report.domain} 30% çəki daşıyır.`,
                   `Üslub balı ${report.style} 16%, oğurluq balı ${report.theft} 18% çəki daşıyır.`,

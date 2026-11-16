@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { RASHAD_ID, employees as seedEmployees, liveTemplates, threatJournal } from "../data/mockData.ts";
+import { RASHAD_ID, employees as seedEmployees, threatJournal } from "../data/mockData.ts";
+import { randomAttackIp } from "../lib/scenario.ts";
 import { unlockAudio } from "../lib/tones.ts";
 import { formatClock, fullName } from "../lib/utils.ts";
 import type { AppTab, Employee, FeedEvent, SimPhase, ToastMessage } from "../types.ts";
@@ -36,11 +37,43 @@ interface SocContextValue {
 
 const SocContext = createContext<SocContextValue | null>(null);
 
+function stampJournal(events: FeedEvent[]): FeedEvent[] {
+  const now = Date.now();
+  return events.map((event, index) => ({
+    ...event,
+    time: formatClock(new Date(now - (events.length - index) * 9 * 60 * 1000 - index * 23000)),
+  }));
+}
+
+const LIVE_KINDS = [
+  {
+    category: "Fişinq" as const,
+    severity: "critical" as const,
+    mitre: "T1566.002 — Spearphishing Link",
+    title: (name: string) => `${name} üçün saxta keçid bloklandı`,
+    detail: (ip: string) => `Poçt şlüzü ${ip} ünvanından gələn fişinq mesajını karantinə aldı.`,
+  },
+  {
+    category: "Dipfeyk" as const,
+    severity: "warning" as const,
+    mitre: "T1656 — Impersonation / Deepfake",
+    title: (name: string) => `${name} ünvanına klon səs dayandırıldı`,
+    detail: (ip: string) => `Akustik mühərrik ${ip} mənbəli səs izini sintetik kimi saxladı.`,
+  },
+  {
+    category: "Daxili anomaliya" as const,
+    severity: "critical" as const,
+    mitre: "T1048 — Exfiltration Over Alternative Protocol",
+    title: (name: string) => `${name} hesabında gecə ixracı kəsildi`,
+    detail: (ip: string) => `Davranış modeli ${ip} sessiyasında qeyri-adi yükləməni dayandırdı.`,
+  },
+];
+
 export function SocProvider({ children }: { children: ReactNode }) {
   const [employees, setEmployees] = useState<Employee[]>(() => seedEmployees.map((employee) => ({ ...employee })));
-  const [feed, setFeed] = useState<FeedEvent[]>(threatJournal);
-  const [phishingBlocked, setPhishingBlocked] = useState(142);
-  const [deepfakeCaught, setDeepfakeCaught] = useState(19);
+  const [feed, setFeed] = useState<FeedEvent[]>(() => stampJournal(threatJournal));
+  const [phishingBlocked, setPhishingBlocked] = useState(() => 136 + Math.floor(Math.random() * 33));
+  const [deepfakeCaught, setDeepfakeCaught] = useState(() => 16 + Math.floor(Math.random() * 13));
   const [tab, setTab] = useState<AppTab>("overview");
   const [killOpen, setKillOpen] = useState(false);
   const [simPhase, setSimPhase] = useState<SimPhase>("idle");
@@ -79,31 +112,28 @@ export function SocProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    let index = 0;
     const timer = window.setInterval(() => {
-      const template = liveTemplates[index % liveTemplates.length];
-      index += 1;
+      const employee = seedEmployees[Math.floor(Math.random() * seedEmployees.length)];
+      const name = fullName(employee);
+      const kind = LIVE_KINDS[Math.floor(Math.random() * LIVE_KINDS.length)];
+      const ip = randomAttackIp();
       pushFeed({
-        ...template,
         id: crypto.randomUUID(),
         time: formatClock(new Date()),
+        title: kind.title(name),
+        detail: kind.detail(ip),
+        technical: `${kind.mitre}. Mənbə ${ip}. Hədəf: ${name}.`,
+        sourceIp: ip,
+        mitre: kind.mitre,
+        severity: kind.severity,
+        category: kind.category,
         source: "live",
       });
-      if (template.category === "Fişinq") setPhishingBlocked((count) => count + 1);
-      if (template.category === "Dipfeyk") setDeepfakeCaught((count) => count + 1);
-    }, 11000);
+      if (kind.category === "Fişinq") setPhishingBlocked((count) => count + 1);
+      if (kind.category === "Dipfeyk") setDeepfakeCaught((count) => count + 1);
+    }, 10000);
     return () => window.clearInterval(timer);
   }, [pushFeed]);
-
-  const openKillChain = useCallback(() => {
-    unlockAudio();
-    setKillOpen(true);
-    if (phaseRef.current === "idle") {
-      phaseRef.current = "running";
-      setSimPhase("running");
-      setKillToken((token) => token + 1);
-    }
-  }, []);
 
   const closeKillChain = useCallback(() => setKillOpen(false), []);
 
@@ -119,6 +149,16 @@ export function SocProvider({ children }: { children: ReactNode }) {
     lockedIdRef.current = null;
     setFeed((current) => current.filter((event) => event.source !== "simulation"));
   }, []);
+
+  const openKillChain = useCallback(() => {
+    unlockAudio();
+    setKillOpen(true);
+    if (phaseRef.current === "running") return;
+    if (phaseRef.current === "done") resetSimulation();
+    phaseRef.current = "running";
+    setSimPhase("running");
+    setKillToken((token) => token + 1);
+  }, [resetSimulation]);
 
   const replayKillChain = useCallback(() => {
     unlockAudio();

@@ -196,11 +196,14 @@ const ATTACK_VALUES = [
   { Fişinq: 21, Dipfeyk: 5, "Daxili anomaliya": 6 },
 ] as const;
 
-export function buildAttackTrend(now = new Date()): AttackPoint[] {
+export function buildAttackTrend(now = new Date(), seed = 0.5): AttackPoint[] {
   return ATTACK_VALUES.map((row, index) => {
     const date = new Date(now);
     date.setDate(now.getDate() - (ATTACK_VALUES.length - 1 - index));
-    return { day: formatDay(date), ...row };
+    const phishing = Math.max(8, Math.min(32, row.Fişinq + Math.round(Math.sin(seed * 40 + index) * 4)));
+    const deepfake = Math.max(1, row.Dipfeyk + Math.round(Math.cos(seed * 25 + index) * 1.4));
+    const insider = Math.max(1, row["Daxili anomaliya"] + Math.round(Math.sin(seed * 18 + index * 2) * 2));
+    return { day: formatDay(date), Fişinq: phishing, Dipfeyk: deepfake, "Daxili anomaliya": insider };
   });
 }
 

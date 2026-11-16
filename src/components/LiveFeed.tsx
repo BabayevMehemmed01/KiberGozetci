@@ -65,7 +65,7 @@ export function LiveFeed({ events }: { events: FeedEvent[] }) {
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" aria-live="polite">
+      <div className="max-h-[580px] min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" aria-live="polite">
         {visible.length === 0 ? <p className="text-sm text-slate-500">Bu kateqoriyada hadisə yoxdur.</p> : null}
         {visible.map((event, index) => {
           const open = openId === event.id;

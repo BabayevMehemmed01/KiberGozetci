@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { GraduationCap } from "lucide-react";
 import { questionsFor } from "../data/mockData.ts";
-import { getBreach, hourlyProfile, profileStats, simulationBreach } from "../lib/behavior.ts";
+import { getBreach, hourlyProfile, profileStats, simulationBreach, type HourPoint } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Panel } from "./ui.tsx";
 import { cn, fullName, workHours } from "../lib/utils.ts";
+
+function ActivityDot(props: { cx?: number; cy?: number; payload?: HourPoint }) {
+  const { cx, cy, payload } = props;
+  if (!payload?.breach || typeof cx !== "number" || typeof cy !== "number") return <g />;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={9} fill="#ef4444" fillOpacity={0.28} />
+      <circle cx={cx} cy={cy} r={4.5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} />
+    </g>
+  );
+}
 
 export function InsiderTracker() {
   const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze, sendPhishingTrap } = useSoc();
@@ -114,12 +125,19 @@ export function InsiderTracker() {
           </div>
           <div className="h-[280px]">
             <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 680, height: 280 }}>
-              <BarChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+              <AreaChart data={points} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="insiderGlow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.55} />
+                    <stop offset="55%" stopColor="#06b6d4" stopOpacity={0.16} />
+                    <stop offset="100%" stopColor="#06b6d4" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="#1E293B" vertical={false} />
                 <XAxis dataKey="hour" interval={2} stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip
-                  cursor={{ fill: "rgba(6, 182, 212, 0.08)" }}
+                  cursor={{ stroke: "rgba(34, 211, 238, 0.35)", strokeWidth: 1 }}
                   contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 12, color: "#F8FAFC" }}
                   labelStyle={{ color: "#E2E8F0" }}
                   itemStyle={{ color: "#E2E8F0" }}
@@ -131,17 +149,33 @@ export function InsiderTracker() {
                     return [`${Number(payload.norma ?? value).toLocaleString("az-AZ")} fayl`, "Normal temp"];
                   }}
                 />
-                <Bar dataKey="norma" name="Normal temp" fill="#334155" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="shown" name="Qeydə alınan" radius={[3, 3, 0, 0]}>
-                  {points.map((point) => (
-                    <Cell key={point.hour} fill={point.breach ? "#EF4444" : "#06B6D4"} />
-                  ))}
-                </Bar>
-              </BarChart>
+                <Area
+                  type="monotone"
+                  dataKey="norma"
+                  name="Normal temp"
+                  stroke="#64748b"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  fill="transparent"
+                  dot={false}
+                  activeDot={false}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="shown"
+                  name="Qeydə alınan"
+                  stroke="#22d3ee"
+                  strokeWidth={3}
+                  fill="url(#insiderGlow)"
+                  dot={ActivityDot}
+                  activeDot={{ r: 5, fill: "#a5f3fc", stroke: "#22d3ee" }}
+                  style={{ filter: "drop-shadow(0 0 6px rgba(34,211,238,0.9))" }}
+                />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
           {showBreach && story ? (
-            <p className="mt-2 text-xs text-slate-500">Qırmızı sütun şkala tavanında göstərilir. Həqiqi say sağ paneldədir.</p>
+            <p className="mt-2 text-xs text-slate-500">Qırmızı nöqtə anomaliya saatını göstərir. Həqiqi say sağ paneldədir.</p>
           ) : null}
         </Panel>
 
@@ -179,7 +213,7 @@ export function InsiderTracker() {
           ) : (
             <div>
               <div className="text-[11px] font-bold tracking-[0.16em] text-emerald-300">NORMAL RİTM</div>
-              <h3 className="mt-2 text-lg font-bold text-white">Şübhəli sütun gizlədilib</h3>
+              <h3 className="mt-2 text-lg font-bold text-white">Şübhəli zirvə gizlədilib</h3>
               <p className="mt-3 text-sm leading-6 text-slate-300">
                 {fullName(employee)} üçün baza ritmi iş saatı {workHours(employee)} aralığına və gündəlik {employee.avgDailyDownloads} fayl normasına görə qurulub.
               </p>

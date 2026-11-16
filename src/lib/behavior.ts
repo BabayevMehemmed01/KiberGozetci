@@ -36,7 +36,7 @@ const BREACHES: Record<string, BreachStory> = {
     mitre: "T1048 — Exfiltration Over Alternative Protocol",
     sourceIp: "185.203.44.19",
   },
-  "nigar-mammadova": {
+  "cemile-agayeva": {
     hour: 3,
     minute: 12,
     files: 2680,

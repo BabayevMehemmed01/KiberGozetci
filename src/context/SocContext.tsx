@@ -196,7 +196,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
 
   const sendSecurityAlert = useCallback(
     async (alert: SecurityAlertInput, options?: { force?: boolean }) => {
-      const result = await postSecurityAlert(alert, options);
+      const result = await postSecurityAlert(alert, { ...options, recipientEmail: alertRecipient });
       if (!result.skipped) {
         pushToast({
           title: result.ok ? "E-poçt bildirişi göndərildi" : "E-poçt göndərilmədi",
@@ -206,7 +206,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    [pushToast],
+    [alertRecipient, pushToast],
   );
 
   const sendPhishingTrap = useCallback(

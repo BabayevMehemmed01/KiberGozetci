@@ -20,9 +20,9 @@ export const employees: Employee[] = [
     email: "rashad.aliyev@azersanaye.example",
   },
   {
-    id: "nigar-mammadova",
-    firstName: "Nigar",
-    lastName: "Məmmədova",
+    id: "cemile-agayeva",
+    firstName: "Cəmilə",
+    lastName: "Ağayeva",
     position: "Maliyyə Direktoru",
     department: "Maliyyə",
     workStart: "09:00",
@@ -32,7 +32,7 @@ export const employees: Employee[] = [
     lastTestResult: "Şübhəli məktubu dərhal bildirdi",
     lastTestStatus: "ugurlu",
     status: "Aktiv",
-    email: "nigar.mammadova@azersanaye.example",
+    email: "cemile.agayeva@azersanaye.example",
   },
   {
     id: "elvin-hasanov",
@@ -369,7 +369,7 @@ export const phishingTemplates: PhishingTemplate[] = [
     title: "Rəsmi daxili məktub",
     description: "100% təhlükəsiz nümunə",
     tone: "tehlukesiz",
-    text: "Hörmətli həmkarlar,\n\nSabah saat 11:00-da iclas zalında rüblük maliyyə hesabatı müzakirə olunacaq. Materiallar daxili portala yerləşdirilib. İştirakınız xahiş olunur.\n\nHörmətlə,\nNigar Məmmədova\nMaliyyə Direktoru",
+    text: "Hörmətli həmkarlar,\n\nSabah saat 11:00-da iclas zalında rüblük maliyyə hesabatı müzakirə olunacaq. Materiallar daxili portala yerləşdirilib. İştirakınız xahiş olunur.\n\nHörmətlə,\nCəmilə Ağayeva\nMaliyyə Direktoru",
     url: "https://portal.sirket.az/hesabatlar/2026-q3",
   },
   {

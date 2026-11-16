@@ -11,7 +11,7 @@ export function ScanSweep({ token }: { token: number }) {
 
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <section className={cn("rounded-2xl border border-[#1E293B] bg-[#0F172A]/95 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)] md:p-5", className)}>
+    <section className={cn("rounded-2xl border border-slate-700/80 bg-[#0F172A]/80 p-4 shadow-[0_12px_32px_rgba(2,6,23,0.28)] backdrop-blur-md md:p-5", className)}>
       {children}
     </section>
   );
@@ -57,7 +57,7 @@ export function Meter({
           initial={{ width: 0 }}
           animate={{ width: value === null ? 0 : `${clamp(value)}%` }}
           transition={{ duration: 0.55, ease: "easeOut" }}
-          style={{ background: color, boxShadow: `0 0 16px ${color}66` }}
+          style={{ background: color, boxShadow: `0 0 8px ${color}33` }}
         />
       </div>
       {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}

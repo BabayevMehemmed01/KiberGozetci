@@ -26,7 +26,7 @@ export function Header() {
                 aria-hidden
                 className="radar-ring pointer-events-none absolute -inset-[3px] animate-[spin_12s_linear_infinite] rounded-full border border-dashed border-cyan-400/50"
               />
-              <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-cyan-400/60 shadow-[0_0_18px_rgba(6,182,212,0.45)]">
+              <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-cyan-400/45 shadow-[0_0_12px_rgba(6,182,212,0.28)]">
                 <img
                   src="/logo.jpg"
                   alt="Neyron Baxış"
@@ -53,7 +53,7 @@ export function Header() {
             onClick={() => setSettingsOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={settingsOpen}
-            className="inline-flex items-center gap-2 rounded-xl border border-[#1E293B] bg-[#0F172A]/80 px-3 py-2.5 text-[11px] font-bold tracking-wide text-slate-200 sm:text-xs"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#1E293B] bg-[#0F172A]/80 px-3 py-2.5 text-[11px] font-bold tracking-wide text-slate-100 sm:text-xs"
           >
             <Settings className="h-4 w-4 shrink-0 text-cyan-300" />
             Ayarlar
@@ -61,7 +61,7 @@ export function Header() {
           <button
             type="button"
             onClick={openKillChain}
-            className="kill-btn inline-flex items-center gap-2 rounded-xl border border-red-300/40 bg-gradient-to-r from-red-600 via-rose-500 to-red-500 px-3 py-2.5 text-left text-[11px] font-extrabold tracking-wide text-white sm:text-xs"
+            className="kill-btn inline-flex cursor-pointer items-center gap-2 rounded-xl border border-red-300/35 bg-gradient-to-r from-red-700 via-rose-600 to-red-600 px-3 py-2.5 text-left text-[11px] font-extrabold tracking-wide text-white sm:text-xs"
           >
             <Siren className="h-4 w-4 shrink-0" />
             ZƏNCİRVARİ HÜCUM SİMULYASİYASI
@@ -82,10 +82,10 @@ export function Header() {
                 aria-selected={active}
                 onClick={() => setTab(item.id)}
                 className={cn(
-                  "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
+                  "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
                   active
-                    ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-100 shadow-[0_0_24px_rgba(6,182,212,0.12)]"
-                    : "border-[#1E293B] bg-[#0F172A]/70 text-slate-300 hover:border-cyan-400/30",
+                    ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-50"
+                    : "border-[#1E293B] bg-[#0F172A]/70 text-slate-200 hover:border-cyan-400/30",
                 )}
               >
                 <Icon className={cn("h-4 w-4 shrink-0", active ? "text-cyan-300" : "text-slate-500")} />

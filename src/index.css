@@ -13,8 +13,8 @@
   body {
     margin: 0;
     min-height: 100vh;
-    background: #060b14;
-    color: #e2e8f0;
+    background: #0f172a;
+    color: #f8fafc;
     font-family: var(--font-sans);
   }
 
@@ -23,6 +23,27 @@
   textarea,
   select {
     font: inherit;
+  }
+
+  button:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  summary,
+  label[for],
+  [role="button"],
+  [role="tab"],
+  [role="switch"],
+  [role="option"],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"] {
+    @apply cursor-pointer;
+  }
+
+  button:disabled,
+  select:disabled,
+  [aria-disabled="true"] {
+    @apply cursor-not-allowed;
   }
 
   ::selection {
@@ -48,10 +69,10 @@
 
 @keyframes soc-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.28);
   }
   70% {
-    box-shadow: 0 0 0 12px rgba(239, 68, 68, 0);
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
   }
   100% {
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
@@ -69,7 +90,39 @@
 }
 
 .soc-glow {
-  background: radial-gradient(ellipse at top, rgba(6, 182, 212, 0.16), transparent 62%);
+  background: radial-gradient(ellipse at top, rgba(6, 182, 212, 0.08), transparent 68%);
+}
+
+.recharts-bar-rectangle,
+.recharts-rectangle,
+.recharts-dot,
+.recharts-sector,
+.recharts-pie-sector,
+.recharts-legend-item {
+  cursor: pointer;
+}
+
+.confetti-bit {
+  position: absolute;
+  top: -8px;
+  width: 7px;
+  height: 12px;
+  border-radius: 999px;
+  animation: confetti-fall 1.15s ease-out forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--confetti-x, 12px), 140px, 0) rotate(180deg);
+    opacity: 0;
+  }
 }
 
 .scan-host {
@@ -98,6 +151,35 @@
     transform: translate3d(0, 100%, 0);
     opacity: 0;
   }
+}
+
+html[data-theme="cyber"] body,
+html:not([data-theme]) body {
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+html[data-theme="cyber"] [class*="bg-[#0F172A]"],
+html:not([data-theme]) [class*="bg-[#0F172A]"] {
+  background-color: rgb(30 41 59 / 0.82) !important;
+  backdrop-filter: blur(12px);
+}
+
+html[data-theme="cyber"] [class*="bg-[#060B14]"],
+html:not([data-theme]) [class*="bg-[#060B14]"] {
+  background-color: rgb(51 65 85 / 0.42) !important;
+}
+
+html[data-theme="cyber"] header.sticky {
+  background-color: rgb(15 23 42 / 0.94) !important;
+}
+
+html[data-theme="cyber"] [class*="text-slate-400"] {
+  color: #e2e8f0 !important;
+}
+
+html[data-theme="cyber"] [class*="text-slate-500"] {
+  color: #cbd5e1 !important;
 }
 
 html[data-theme="emerald"] {
@@ -301,7 +383,8 @@ html[data-theme="cyber"] input[type="range"] {
 @media (prefers-reduced-motion: reduce) {
   .kill-btn,
   .radar-ring,
-  .scan-laser {
+  .scan-laser,
+  .confetti-bit {
     animation: none;
   }
 }

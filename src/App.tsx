@@ -13,7 +13,7 @@ function Shell() {
   return (
     <div className="relative min-h-screen">
       <div className="soc-grid pointer-events-none fixed inset-0" />
-      <div className="soc-glow pointer-events-none fixed inset-x-0 top-0 h-72 bg-[radial-gradient(ellipse_at_top,rgba(6,182,212,0.16),transparent_62%)]" />
+      <div className="soc-glow pointer-events-none fixed inset-x-0 top-0 h-72" />
       <div className="relative z-10">
         <Header />
         <main className="mx-auto max-w-[1480px] px-4 py-6 md:px-6">

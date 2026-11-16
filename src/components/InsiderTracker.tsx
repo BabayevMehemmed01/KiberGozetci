@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { GraduationCap } from "lucide-react";
+import { CircleCheck, GraduationCap, ShieldAlert } from "lucide-react";
 import { questionsFor } from "../data/mockData.ts";
 import { getBreach, hourlyProfile, profileStats, simulationBreach } from "../lib/behavior.ts";
 import { useSoc } from "../context/SocContext.tsx";
@@ -9,9 +9,10 @@ import { Panel } from "./ui.tsx";
 import { cn, fullName, workHours } from "../lib/utils.ts";
 
 export function InsiderTracker() {
-  const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze, phishingTrap, clearPhishingTrap, sendPhishingTrap } = useSoc();
+  const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze, phishingTrap, sendPhishingTrap, releasePhishingTrap } = useSoc();
   const [employeeId, setEmployeeId] = useState(phishingTrap?.employeeId || employees[0]?.id || "");
   const [sendingTrap, setSendingTrap] = useState(false);
+  const [trapSuccess, setTrapSuccess] = useState(false);
   const [showBreach, setShowBreach] = useState(true);
   const [step, setStep] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
@@ -34,17 +35,14 @@ export function InsiderTracker() {
     if (!phishingTrap?.employeeId) return;
     setEmployeeId(phishingTrap.employeeId);
     setShowBreach(true);
-    setStep(0);
-    setPicked(null);
-    setFinished(false);
-    setCorrectCount(0);
-  }, [phishingTrap?.employeeId, phishingTrap?.employeeName]);
+  }, [phishingTrap?.employeeId]);
 
   useEffect(() => {
     setStep(0);
     setPicked(null);
     setFinished(false);
     setCorrectCount(0);
+    setTrapSuccess(false);
   }, [employeeId]);
 
   const question = questions[Math.min(step, questions.length - 1)];
@@ -61,8 +59,13 @@ export function InsiderTracker() {
     if (step === questions.length - 1) {
       setCorrectCount(nextCorrect);
       setFinished(true);
-      applyTraining(employee.id, nextCorrect);
-      if (phishingTrap) clearPhishingTrap();
+      if (phishingTrap) {
+        applyTraining(employee.id, nextCorrect, { restore: true });
+        setTrapSuccess(true);
+        releasePhishingTrap();
+      } else {
+        applyTraining(employee.id, nextCorrect);
+      }
       return;
     }
     setCorrectCount(nextCorrect);
@@ -72,9 +75,15 @@ export function InsiderTracker() {
 
   return (
     <div className="space-y-4">
-      {phishingTrap ? (
-        <div className="rounded-2xl border border-red-400/50 bg-red-500/15 px-4 py-3 text-sm font-semibold leading-6 text-red-100">
-          Siz simulyasiya edilmiş fişinq keçidinə kliklədiniz! Sayıqlıq balınızı bərpa etmək üçün aşağıdakı 3 suallıq kiber-təlim testini tamamlayın
+      {phishingTrap && !trapSuccess ? (
+        <div role="alert" className="flex items-start gap-3 rounded-2xl border border-red-400/35 bg-red-950/55 px-4 py-4 shadow-[0_10px_30px_rgba(127,29,29,0.18)] backdrop-blur">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-200" aria-hidden />
+          <div>
+            <p className="text-[11px] font-bold tracking-[0.16em] text-red-200">FİŞİNQ TƏLƏSİ · RƏSMİ XƏBƏRDARLIQ</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-red-50">
+              Siz simulyasiya edilmiş fişinq keçidinə kliklədiniz! Sayıqlıq balınızı bərpa etmək üçün aşağıdakı 3 suallıq kiber-təlim testini tamamlayın
+            </p>
+          </div>
         </div>
       ) : null}
       <div>
@@ -94,7 +103,7 @@ export function InsiderTracker() {
                 value={employee.id}
                 disabled={Boolean(phishingTrap?.employeeId)}
                 onChange={(event) => selectEmployee(event.target.value)}
-                className="w-full rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2.5 outline-none disabled:opacity-70"
+                className="w-full cursor-pointer rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2.5 outline-none disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {employees.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -110,14 +119,14 @@ export function InsiderTracker() {
                 setSendingTrap(true);
                 void sendPhishingTrap(fullName(employee)).finally(() => setSendingTrap(false));
               }}
-              className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2.5 text-xs font-bold text-cyan-100 disabled:opacity-60"
+              className="cursor-pointer rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2.5 text-xs font-bold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {sendingTrap ? "Göndərilir..." : "Sınaq Göndər"}
             </button>
             <button
               type="button"
               onClick={() => setShowBreach((value) => !value)}
-              className="rounded-xl border border-[#1E293B] px-3 py-2.5 text-xs font-semibold text-slate-200"
+              className="cursor-pointer rounded-xl border border-[#1E293B] px-3 py-2.5 text-xs font-semibold text-slate-200"
             >
               {showBreach ? "Şübhəli aktivlik açıqdır" : "Şübhəli aktivliyi göstər"}
             </button>
@@ -133,7 +142,7 @@ export function InsiderTracker() {
                 <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip
                   cursor={{ fill: "rgba(6, 182, 212, 0.08)" }}
-                  contentStyle={{ background: "#0B1220", border: "1px solid #1E293B", borderRadius: 12, color: "#E2E8F0" }}
+                  contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 12, color: "#F8FAFC" }}
                   labelStyle={{ color: "#E2E8F0" }}
                   itemStyle={{ color: "#E2E8F0" }}
                   formatter={(value, name, item) => {
@@ -174,7 +183,7 @@ export function InsiderTracker() {
           <button
             type="button"
             onClick={() => toggleFreeze(employee.id)}
-            className="w-full rounded-xl border border-red-400/40 bg-red-500/15 py-2.5 text-sm font-bold text-red-100"
+            className="w-full cursor-pointer rounded-xl border border-red-400/35 bg-red-500/10 py-2.5 text-sm font-bold text-red-50"
           >
             {employee.status === "Dondurulub" ? "Hesab dondurulub — aktivləşdir" : "Hesabı dərhal dondur"}
           </button>
@@ -223,6 +232,29 @@ export function InsiderTracker() {
           </span>
         </div>
         {finished ? (
+          trapSuccess ? (
+            <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-emerald-500/15 p-5">
+              {["8%", "22%", "38%", "54%", "70%", "86%"].map((left, index) => (
+                <span
+                  key={left}
+                  className="confetti-bit"
+                  style={{
+                    left,
+                    background: index % 2 === 0 ? "#6ee7b7" : "#34d399",
+                    animationDelay: `${index * 0.06}s`,
+                    ["--confetti-x" as string]: index % 2 === 0 ? "16px" : "-16px",
+                  }}
+                />
+              ))}
+              <div className="flex items-start gap-3">
+                <CircleCheck className="h-8 w-8 shrink-0 text-emerald-300" aria-hidden />
+                <div>
+                  <p className="text-base font-bold text-emerald-50">Kiber-təlim uğurla tamamlandı! Sayıqlıq balınız bərpa edildi.</p>
+                  <p className="mt-1 font-mono text-sm text-emerald-100">{correctCount}/3 düzgün cavab</p>
+                </div>
+              </div>
+            </div>
+          ) : (
           <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4">
             <div className="font-mono text-3xl text-cyan-100">{correctCount}/3</div>
             <p className="mt-2 text-sm text-slate-200">
@@ -238,11 +270,12 @@ export function InsiderTracker() {
                 setPicked(null);
                 setCorrectCount(0);
               }}
-              className="mt-4 rounded-xl border border-cyan-300/40 px-3 py-2 text-xs font-bold text-cyan-100"
+              className="mt-4 cursor-pointer rounded-xl border border-cyan-300/40 px-3 py-2 text-xs font-bold text-cyan-100"
             >
               Testi yenidən başlat
             </button>
           </div>
+          )
         ) : (
           <div>
             <div className="mb-3 text-xs text-slate-500">Sual {step + 1} / 3</div>
@@ -259,7 +292,7 @@ export function InsiderTracker() {
                     type="button"
                     onClick={() => setPicked(option.id)}
                     className={cn(
-                      "block w-full rounded-xl border px-3 py-3 text-left text-sm",
+                      "block w-full cursor-pointer rounded-xl border px-3 py-3 text-left text-sm",
                       good && "border-emerald-400/50 bg-emerald-400/10",
                       bad && "border-red-400/50 bg-red-400/10",
                       !good && !bad && "border-[#1E293B] bg-[#060B14] hover:border-cyan-400/30",
@@ -275,7 +308,7 @@ export function InsiderTracker() {
               type="button"
               disabled={!picked}
               onClick={advance}
-              className="mt-4 rounded-xl bg-cyan-400 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-40"
+              className="mt-4 cursor-pointer rounded-xl bg-cyan-400 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {step === questions.length - 1 ? "Nəticəni yaz" : "Növbəti sual"}
             </button>

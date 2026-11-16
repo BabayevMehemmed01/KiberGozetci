@@ -40,7 +40,8 @@ interface SocContextValue {
   clearPhishingTrap: () => void;
   sendPhishingTrap: (employeeName: string) => Promise<{ ok: boolean; skipped: boolean; message: string }>;
   toggleFreeze: (id: string) => void;
-  applyTraining: (id: string, correct: number) => void;
+  applyTraining: (id: string, correct: number, options?: { restore?: boolean }) => void;
+  releasePhishingTrap: () => void;
   registerPhishingBlock: (title: string) => void;
   registerDeepfakeCatch: (title: string) => void;
   mailAlertsEnabled: boolean;
@@ -203,6 +204,20 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const clearPhishingTrap = useCallback(() => {
     sessionStorage.removeItem(TRAP_PENDING_KEY);
     setPhishingTrap(null);
+  }, []);
+
+  const releaseTimer = useRef<number | null>(null);
+  const releasePhishingTrap = useCallback(() => {
+    sessionStorage.removeItem(TRAP_PENDING_KEY);
+    if (releaseTimer.current) window.clearTimeout(releaseTimer.current);
+    releaseTimer.current = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("phish_trap");
+      url.searchParams.delete("emp");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      setPhishingTrap(null);
+      releaseTimer.current = null;
+    }, 3000);
   }, []);
 
   const sendSecurityAlert = useCallback(
@@ -467,10 +482,10 @@ export function SocProvider({ children }: { children: ReactNode }) {
   );
 
   const applyTraining = useCallback(
-    (id: string, correct: number) => {
+    (id: string, correct: number, options?: { restore?: boolean }) => {
       const employee = employeesRef.current.find((item) => item.id === id);
       if (!employee) return;
-      const delta = correct >= 3 ? 8 : correct === 2 ? 5 : correct === 1 ? 2 : 0;
+      const delta = options?.restore ? 15 : correct >= 3 ? 8 : correct === 2 ? 5 : correct === 1 ? 2 : 0;
       const nextScore = Math.min(100, employee.awarenessScore + delta);
       setEmployees((current) =>
         current.map((item) =>
@@ -478,21 +493,23 @@ export function SocProvider({ children }: { children: ReactNode }) {
             ? {
                 ...item,
                 awarenessScore: nextScore,
-                lastTestResult: `Kiber-test: ${correct}/3 düzgün`,
+                lastTestResult: options?.restore ? `Kiber-təlim tamamlandı: ${correct}/3` : `Kiber-test: ${correct}/3 düzgün`,
                 lastTestStatus: correct >= 2 ? "ugurlu" : correct === 1 ? "qismen" : "ugursuz",
-                status: item.status === "Dondurulub" ? "Dondurulub" : correct >= 2 && nextScore >= 75 ? "Aktiv" : item.status,
+                status: item.status === "Dondurulub" ? "Dondurulub" : !options?.restore && correct >= 2 && nextScore >= 75 ? "Aktiv" : item.status,
               }
             : item,
         ),
       );
-      pushToast({
-        title: delta > 0 ? "Sayıqlıq balı artdı" : "Təlim təkrarı lazımdır",
-        message:
-          delta > 0
-            ? `${fullName(employee)} ${correct}/3 düzgün cavab verdi. Yeni bal: ${nextScore}.`
-            : `${fullName(employee)} testi keçə bilmədi. Bal dəyişmədi.`,
-        tone: correct >= 2 ? "success" : "warning",
-      });
+      if (!options?.restore) {
+        pushToast({
+          title: delta > 0 ? "Sayıqlıq balı artdı" : "Təlim təkrarı lazımdır",
+          message:
+            delta > 0
+              ? `${fullName(employee)} ${correct}/3 düzgün cavab verdi. Yeni bal: ${nextScore}.`
+              : `${fullName(employee)} testi keçə bilmədi. Bal dəyişmədi.`,
+          tone: correct >= 2 ? "success" : "warning",
+        });
+      }
     },
     [pushToast],
   );
@@ -571,6 +588,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
       lastOutcome,
       phishingTrap,
       clearPhishingTrap,
+      releasePhishingTrap,
       sendPhishingTrap,
       toggleFreeze,
       applyTraining,
@@ -611,6 +629,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
       lastOutcome,
       phishingTrap,
       clearPhishingTrap,
+      releasePhishingTrap,
       sendPhishingTrap,
       toggleFreeze,
       applyTraining,

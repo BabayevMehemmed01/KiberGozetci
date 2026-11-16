@@ -83,7 +83,7 @@ export function Dashboard() {
                 <XAxis dataKey="day" stroke="#94A3B8" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 12 }}
+                  contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 12, color: "#F8FAFC" }}
                   labelStyle={{ color: "#E2E8F0" }}
                 />
                 <Legend wrapperStyle={{ color: "#CBD5E1", fontSize: 12 }} />

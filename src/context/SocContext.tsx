@@ -36,7 +36,9 @@ interface SocContextValue {
   quarantineThreshold: number;
   setQuarantineThreshold: (value: number) => void;
   lastOutcome: SimulationOutcome | null;
-  sendAwarenessTest: (id: string) => void;
+  phishingTrap: PhishingTrap | null;
+  clearPhishingTrap: () => void;
+  sendPhishingTrap: (employeeName: string) => Promise<{ ok: boolean; skipped: boolean; message: string }>;
   toggleFreeze: (id: string) => void;
   applyTraining: (id: string, correct: number) => void;
   registerPhishingBlock: (title: string) => void;
@@ -80,6 +82,40 @@ function stampJournal(events: FeedEvent[]): FeedEvent[] {
   }));
 }
 
+const TRAP_HIT_KEY = "kibergozetci-phish-trap-hit";
+const TRAP_PENDING_KEY = "kibergozetci-phish-trap-pending";
+
+export interface PhishingTrap {
+  employeeId: string | null;
+  employeeName: string;
+}
+
+function normalizeName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("az-AZ");
+}
+
+function readPendingTrap(): PhishingTrap | null {
+  try {
+    const raw = sessionStorage.getItem(TRAP_PENDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PhishingTrap>;
+    if (typeof parsed.employeeName !== "string" || !parsed.employeeName.trim()) return null;
+    return { employeeId: parsed.employeeId ?? null, employeeName: parsed.employeeName.trim() };
+  } catch {
+    return null;
+  }
+}
+
+function initialTab(): AppTab {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("phish_trap") === "1" || sessionStorage.getItem(TRAP_PENDING_KEY)) return "insider";
+  } catch {
+    return "overview";
+  }
+  return "overview";
+}
+
 const LIVE_KINDS = [
   {
     category: "Fişinq" as const,
@@ -109,7 +145,8 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const [feed, setFeed] = useState<FeedEvent[]>(() => stampJournal(threatJournal));
   const [phishingBlocked, setPhishingBlocked] = useState(() => 136 + Math.floor(Math.random() * 33));
   const [deepfakeCaught, setDeepfakeCaught] = useState(() => 16 + Math.floor(Math.random() * 13));
-  const [tab, setTab] = useState<AppTab>("overview");
+  const [tab, setTab] = useState<AppTab>(initialTab);
+  const [phishingTrap, setPhishingTrap] = useState<PhishingTrap | null>(readPendingTrap);
   const [killOpen, setKillOpen] = useState(false);
   const [simPhase, setSimPhase] = useState<SimPhase>("idle");
   const [killToken, setKillToken] = useState(0);
@@ -163,6 +200,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
     saveMailSettings(loadMailSettings().enabled, email);
   }, []);
 
+  const clearPhishingTrap = useCallback(() => {
+    sessionStorage.removeItem(TRAP_PENDING_KEY);
+    setPhishingTrap(null);
+  }, []);
+
   const sendSecurityAlert = useCallback(
     async (alert: SecurityAlertInput, options?: { force?: boolean }) => {
       const result = await postSecurityAlert(alert, options);
@@ -178,6 +220,25 @@ export function SocProvider({ children }: { children: ReactNode }) {
     [pushToast],
   );
 
+  const sendPhishingTrap = useCallback(
+    (employeeName: string) => {
+      const name = employeeName.trim() || "Rəşad Əliyev";
+      return sendSecurityAlert(
+        {
+          type: "phishing_trap",
+          alertType: "Fişinq tələsi sınağı",
+          targetEmployee: name,
+          employeeName: name,
+          riskScore: 72,
+          mitreCode: "T1566.002 — Spearphishing Link",
+          details: `${name} üçün təcili hesab təsdiqi görünümlü sınaq məktubu göndərildi. Keçid yalnız bu saytın fişinq tələsinə açılır.`,
+        },
+        { force: true },
+      );
+    },
+    [sendSecurityAlert],
+  );
+
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme === "daylight" ? "light" : "dark";
@@ -191,6 +252,66 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const pushFeed = useCallback((event: FeedEvent) => {
     setFeed((current) => [event, ...current].slice(0, 16));
   }, []);
+
+  const trapBoot = useRef(false);
+  useLayoutEffect(() => {
+    if (trapBoot.current) return;
+    trapBoot.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const armed = params.get("phish_trap") === "1";
+    const rawName = params.get("emp")?.trim().replace(/\s+/g, " ") ?? "";
+    if (!armed || !rawName) return;
+    const key = normalizeName(rawName);
+    const employee = employeesRef.current.find((item) => normalizeName(fullName(item)) === key || item.id === rawName);
+    const name = employee ? fullName(employee) : rawName;
+    if (sessionStorage.getItem(TRAP_HIT_KEY) !== key) {
+      sessionStorage.setItem(TRAP_HIT_KEY, key);
+      if (employee) {
+        const nextScore = Math.max(0, employee.awarenessScore - 15);
+        setEmployees((current) =>
+          current.map((item) =>
+            item.id === employee.id
+              ? {
+                  ...item,
+                  awarenessScore: nextScore,
+                  status: item.status === "Dondurulub" ? "Dondurulub" : "Nəzarətdə",
+                  lastTestResult: "Sınaq fişinq keçidini açdı",
+                  lastTestStatus: "ugursuz",
+                }
+              : item,
+          ),
+        );
+      }
+      pushFeed({
+        id: crypto.randomUUID(),
+        time: formatClock(new Date()),
+        title: `Tələyə düşdü: ${name} sınaq fişinq keçidini açdı`,
+        detail: employee
+          ? employee.status === "Dondurulub"
+            ? `${name} simulyasiya edilmiş fişinq keçidini açdı. Kiber-sayıqlıq balı 15 vahid azaldı. Hesab dondurulmuş vəziyyətdə qalır.`
+            : `${name} simulyasiya edilmiş fişinq keçidini açdı. Kiber-sayıqlıq balı 15 vahid azaldı və hesab nəzarətə alındı.`
+          : `${name} simulyasiya edilmiş fişinq keçidini açdı.`,
+        technical: "Keçid ?phish_trap=1 parametri ilə yerli təlim tələsinə düşdü. Kənar sayta yönləndirmə yoxdur.",
+        mitre: "T1566.002 — Spearphishing Link",
+        severity: "critical",
+        category: "Fişinq",
+        source: "user",
+      });
+      pushToast({
+        title: "Fişinq tələsi işə düşdü",
+        message: `${name} sınaq keçidini açdı.`,
+        tone: "critical",
+      });
+    }
+    const pending: PhishingTrap = { employeeId: employee?.id ?? null, employeeName: name };
+    sessionStorage.setItem(TRAP_PENDING_KEY, JSON.stringify(pending));
+    setPhishingTrap(pending);
+    setTab("insider");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("phish_trap");
+    url.searchParams.delete("emp");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [pushFeed, pushToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -306,43 +427,6 @@ export function SocProvider({ children }: { children: ReactNode }) {
       details: `${outcome.title}. Bloklama ${outcome.blockSeconds.toFixed(1)} saniyədə tamamlandı. Qarşısı alınan zərər ₼ ${outcome.damage.toLocaleString("az-AZ")}. Tədbir: hesab donduruldu, ixrac dayandırıldı, sessiya bağlandı.`,
     });
   }, [pushFeed, pushToast, sendSecurityAlert]);
-
-  const sendAwarenessTest = useCallback(
-    (id: string) => {
-      const employee = employeesRef.current.find((item) => item.id === id);
-      if (!employee) return;
-      const passed = Math.random() < 0.28 + employee.awarenessScore / 150;
-      const delta = passed ? 4 + Math.floor(Math.random() * 5) : -(4 + Math.floor(Math.random() * 4));
-      const nextScore = Math.max(15, Math.min(100, employee.awarenessScore + delta));
-      const nextStatus =
-        employee.status === "Dondurulub"
-          ? "Dondurulub"
-          : passed && nextScore >= 75
-            ? "Aktiv"
-            : !passed && nextScore < 70
-              ? "Nəzarətdə"
-              : employee.status;
-      setEmployees((current) =>
-        current.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                awarenessScore: nextScore,
-                status: nextStatus,
-                lastTestStatus: passed ? "ugurlu" : "ugursuz",
-                lastTestResult: passed ? "Şübhəli məktubu bildirdi" : "Sınaq keçidinə kliklədi",
-              }
-            : item,
-        ),
-      );
-      pushToast({
-        title: passed ? "Sınaqdan keçdi" : "Sınaqda zəiflik",
-        message: `${fullName(employee)} üçün yeni kiber-sayıqlıq balı: ${nextScore}.`,
-        tone: passed ? "success" : "warning",
-      });
-    },
-    [pushToast],
-  );
 
   const toggleFreeze = useCallback(
     (id: string) => {
@@ -485,7 +569,9 @@ export function SocProvider({ children }: { children: ReactNode }) {
       quarantineThreshold,
       setQuarantineThreshold,
       lastOutcome,
-      sendAwarenessTest,
+      phishingTrap,
+      clearPhishingTrap,
+      sendPhishingTrap,
       toggleFreeze,
       applyTraining,
       registerPhishingBlock,
@@ -523,7 +609,9 @@ export function SocProvider({ children }: { children: ReactNode }) {
       quarantineThreshold,
       setQuarantineThreshold,
       lastOutcome,
-      sendAwarenessTest,
+      phishingTrap,
+      clearPhishingTrap,
+      sendPhishingTrap,
       toggleFreeze,
       applyTraining,
       registerPhishingBlock,

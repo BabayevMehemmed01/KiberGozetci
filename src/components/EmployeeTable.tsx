@@ -12,7 +12,7 @@ const TEST_LABEL: Record<TestOutcome, string> = {
 };
 
 export function EmployeeTable() {
-  const { employees, sendAwarenessTest, toggleFreeze, simulationLocked, lockedEmployeeId } = useSoc();
+  const { employees, sendPhishingTrap, toggleFreeze, simulationLocked, lockedEmployeeId } = useSoc();
   const [query, setQuery] = useState("");
   const [riskFirst, setRiskFirst] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -29,11 +29,12 @@ export function EmployeeTable() {
   }, [employees, query, riskFirst]);
 
   function runTest(id: string) {
+    const employee = employees.find((item) => item.id === id);
+    if (!employee) return;
     setPendingId(id);
-    window.setTimeout(() => {
-      sendAwarenessTest(id);
+    void sendPhishingTrap(fullName(employee)).finally(() => {
       setPendingId((current) => (current === id ? null : current));
-    }, 700);
+    });
   }
 
   return (

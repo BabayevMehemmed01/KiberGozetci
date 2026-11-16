@@ -9,8 +9,9 @@ import { Panel } from "./ui.tsx";
 import { cn, fullName, workHours } from "../lib/utils.ts";
 
 export function InsiderTracker() {
-  const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze } = useSoc();
-  const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
+  const { employees, simulationLocked, applyTraining, lockedEmployeeId, toggleFreeze, phishingTrap, clearPhishingTrap, sendPhishingTrap } = useSoc();
+  const [employeeId, setEmployeeId] = useState(phishingTrap?.employeeId || employees[0]?.id || "");
+  const [sendingTrap, setSendingTrap] = useState(false);
   const [showBreach, setShowBreach] = useState(true);
   const [step, setStep] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
@@ -24,10 +25,20 @@ export function InsiderTracker() {
   const questions = useMemo(() => questionsFor(employee.department), [employee.department]);
 
   useEffect(() => {
-    if (!simulationLocked || !lockedEmployeeId) return;
+    if (!simulationLocked || !lockedEmployeeId || phishingTrap?.employeeId) return;
     setEmployeeId(lockedEmployeeId);
     setShowBreach(true);
-  }, [simulationLocked, lockedEmployeeId]);
+  }, [simulationLocked, lockedEmployeeId, phishingTrap?.employeeId]);
+
+  useEffect(() => {
+    if (!phishingTrap?.employeeId) return;
+    setEmployeeId(phishingTrap.employeeId);
+    setShowBreach(true);
+    setStep(0);
+    setPicked(null);
+    setFinished(false);
+    setCorrectCount(0);
+  }, [phishingTrap?.employeeId, phishingTrap?.employeeName]);
 
   useEffect(() => {
     setStep(0);
@@ -51,6 +62,7 @@ export function InsiderTracker() {
       setCorrectCount(nextCorrect);
       setFinished(true);
       applyTraining(employee.id, nextCorrect);
+      if (phishingTrap) clearPhishingTrap();
       return;
     }
     setCorrectCount(nextCorrect);
@@ -60,6 +72,11 @@ export function InsiderTracker() {
 
   return (
     <div className="space-y-4">
+      {phishingTrap ? (
+        <div className="rounded-2xl border border-red-400/50 bg-red-500/15 px-4 py-3 text-sm font-semibold leading-6 text-red-100">
+          Siz simulyasiya edilmiş fişinq keçidinə kliklədiniz! Sayıqlıq balınızı bərpa etmək üçün aşağıdakı 3 suallıq kiber-təlim testini tamamlayın
+        </div>
+      ) : null}
       <div>
         <p className="text-xs font-bold tracking-[0.18em] text-cyan-300">3-CÜ MÜDAFİƏ XƏTTİ</p>
         <h2 className="mt-1 text-xl font-bold text-white">Daxili davranış izləyicisi və kiber-sayıqlıq təlimi</h2>
@@ -75,8 +92,9 @@ export function InsiderTracker() {
               <span className="mb-1.5 block text-slate-400">Əməkdaş profili</span>
               <select
                 value={employee.id}
+                disabled={Boolean(phishingTrap?.employeeId)}
                 onChange={(event) => selectEmployee(event.target.value)}
-                className="w-full rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2.5 outline-none"
+                className="w-full rounded-xl border border-[#1E293B] bg-[#060B14] px-3 py-2.5 outline-none disabled:opacity-70"
               >
                 {employees.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -85,6 +103,17 @@ export function InsiderTracker() {
                 ))}
               </select>
             </label>
+            <button
+              type="button"
+              disabled={sendingTrap}
+              onClick={() => {
+                setSendingTrap(true);
+                void sendPhishingTrap(fullName(employee)).finally(() => setSendingTrap(false));
+              }}
+              className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2.5 text-xs font-bold text-cyan-100 disabled:opacity-60"
+            >
+              {sendingTrap ? "Göndərilir..." : "Sınaq Göndər"}
+            </button>
             <button
               type="button"
               onClick={() => setShowBreach((value) => !value)}

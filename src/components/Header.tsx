@@ -30,7 +30,7 @@ export function Header() {
                 <img
                   src="/logo.jpg"
                   alt="Neyron Baxış"
-                  className="h-full w-full rounded-full object-cover object-[50%_34%] scale-[1.28]"
+                  className="h-full w-full rounded-full object-cover object-center scale-110"
                 />
               </div>
             </div>

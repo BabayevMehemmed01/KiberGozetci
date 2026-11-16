@@ -4,10 +4,10 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import { deliverAlert } from "./api/send-alert.ts";
 
-const SMTP_KEYS = ["SMTP_USER", "SMTP_PASS", "SMTP_HOST", "SMTP_PORT", "ALERT_RECEIVER_EMAIL"] as const;
+const ENV_KEYS = ["RESEND_API_KEY", "ALERT_RECEIVER_EMAIL"] as const;
 
-function applySmtpEnv(env: Record<string, string>) {
-  for (const key of SMTP_KEYS) {
+function applyAlertEnv(env: Record<string, string>) {
+  for (const key of ENV_KEYS) {
     if (env[key] && !process.env[key]) process.env[key] = env[key];
   }
 }
@@ -35,7 +35,7 @@ function alertApiPlugin(env: Record<string, string>): Plugin {
   return {
     name: "kibergozetci-alert-api",
     configureServer(server) {
-      applySmtpEnv(env);
+      applyAlertEnv(env);
       server.middlewares.use((req, res, next) => {
         if (req.url?.split("?")[0] !== "/api/send-alert") {
           next();
@@ -57,10 +57,11 @@ async function handleAlert(req: IncomingMessage, res: ServerResponse) {
   try {
     const result = await deliverAlert(await readBody(req));
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, recipient: result.recipient }));
+    res.end(JSON.stringify({ ok: true, recipient: result.recipient, fallback: result.fallback }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "E-poçt göndərilmədi.";
-    res.statusCode = message.startsWith("SMTP") || message.startsWith("E-poçt serveri") ? 502 : 400;
+    const clientError = message.includes("mütləqdir") || message.includes("düzgün deyil") || message.includes("oxunmadı") || message.includes("rəqəm");
+    res.statusCode = clientError ? 400 : 502;
     res.end(JSON.stringify({ ok: false, error: message }));
   }
 }

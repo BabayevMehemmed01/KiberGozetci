@@ -33,7 +33,7 @@ function Shell() {
           </AnimatePresence>
         </main>
         <footer className="border-t border-[#1E293B] px-4 py-4 text-center text-xs text-slate-500">
-          Bütün analizlər yerli mühərrikdə aparılır · Xarici API istifadə olunmur
+          Analizlər yerli mühərrikdə aparılır · Bildirişlər Resend üzərindən göndərilir
         </footer>
       </div>
       <KillChainModal />

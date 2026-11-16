@@ -13,7 +13,7 @@ const THEMES: { id: SocTheme; title: string; caption: string; swatch: string }[]
 ];
 
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { theme, setTheme, quarantineThreshold, setQuarantineThreshold, mailAlertsEnabled, setMailAlertsEnabled, alertRecipient, setAlertRecipient, sendSecurityAlert } = useSoc();
+  const { theme, setTheme, quarantineThreshold, setQuarantineThreshold, mailAlertsEnabled, setMailAlertsEnabled, alertRecipient, setAlertRecipient, sendPhishingTrap, employees, targetEmployeeId } = useSoc();
   const [sendingTest, setSendingTest] = useState(false);
   const [testNote, setTestNote] = useState("");
 
@@ -112,7 +112,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Mail className="h-4 w-4 text-cyan-300" />
-                  Avtomatik E-poçt Bildirişləri (SMTP)
+                  Avtomatik E-poçt Bildirişləri (Resend API)
                 </h3>
                 <button
                   type="button"
@@ -140,16 +140,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                 onClick={() => {
                   setSendingTest(true);
                   setTestNote("Test bildirişi göndərilir...");
-                  void sendSecurityAlert(
-                    {
-                      alertType: "Test bildirişi",
-                      targetEmployee: "SOC operatoru",
-                      riskScore: 0,
-                      mitreCode: "—",
-                      details: "SMTP kanalı yoxlanıldı. Heç bir hesab dondurulmayıb və heç bir mesaj karantinə alınmayıb.",
-                    },
-                    { force: true },
-                  ).then((result) => {
+                  const person = employees.find((item) => item.id === targetEmployeeId) ?? employees[0];
+                  const name = person ? `${person.firstName} ${person.lastName}` : "Rəşad Əliyev";
+                  void sendPhishingTrap(name).then((result) => {
                     setTestNote(result.message);
                     setSendingTest(false);
                   });
@@ -160,7 +153,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               </button>
               {testNote ? <p className="mt-2 text-xs leading-5 text-cyan-200">{testNote}</p> : null}
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                Karantin və hesabın dondurulması bu ünvana SOC hesabatı göndərir. SMTP girişi yalnız server mühitində saxlanılır.
+                Test düyməsi fişinq tələsi məktubu göndərir. Karantin və hesabın dondurulması SOC hesabatı göndərir. Resend açarı yalnız server mühitində saxlanılır.
               </p>
             </div>
           </motion.div>

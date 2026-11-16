@@ -1,9 +1,13 @@
+export type AlertKind = "phishing_trap" | "security_alert";
+
 export interface SecurityAlertInput {
+  type?: AlertKind;
   alertType: string;
   targetEmployee: string;
   riskScore: number;
   details: string;
   mitreCode: string;
+  employeeName?: string;
 }
 
 export interface AlertResult {
@@ -45,15 +49,19 @@ export async function postSecurityAlert(alert: SecurityAlertInput, options?: { f
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...alert,
+        type: alert.type ?? "security_alert",
         recipientEmail: settings.recipientEmail || DEFAULT_ALERT_EMAIL,
         timestamp: new Date().toLocaleString("az-AZ"),
+        origin: window.location.origin,
       }),
     });
-    const data = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; recipient?: string } | null;
+    const data = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; recipient?: string; fallback?: boolean } | null;
     if (!response.ok || !data?.ok) {
       return { ok: false, skipped: false, message: data?.error || "E-poçt göndərilmədi." };
     }
-    return { ok: true, skipped: false, message: `Bildiriş göndərildi: ${data.recipient ?? settings.recipientEmail}` };
+    const recipient = data.recipient ?? settings.recipientEmail;
+    const message = data.fallback ? `Bildiriş ehtiyat ünvana göndərildi: ${recipient}` : `Bildiriş göndərildi: ${recipient}`;
+    return { ok: true, skipped: false, message };
   } catch {
     return { ok: false, skipped: false, message: "E-poçt xidmətinə qoşulmaq alınmadı." };
   }

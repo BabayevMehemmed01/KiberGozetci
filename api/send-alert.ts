@@ -1,9 +1,11 @@
-import { createTransport } from "nodemailer";
-
+const RESEND_URL = "https://api.resend.com/emails";
+const FROM = "KiberGozetci SOC <onboarding@resend.dev>";
 const DEFAULT_RECEIVER = "birlik1020@gmail.com";
+const DEFAULT_ORIGIN = "https://kibergozetci.vercel.app";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface AlertPayload {
+  type: "phishing_trap" | "security_alert";
   alertType: string;
   targetEmployee: string;
   riskScore: number;
@@ -11,6 +13,8 @@ export interface AlertPayload {
   mitreCode: string;
   recipientEmail: string;
   timestamp: string;
+  employeeName: string;
+  origin: string;
 }
 
 interface ApiRequest {
@@ -36,37 +40,94 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function smtpPassword(): string {
-  return (process.env.SMTP_PASS ?? "").replace(/\s+/g, "");
+function fallbackReceiver(): string {
+  const configured = clip(process.env.ALERT_RECEIVER_EMAIL, 160);
+  return EMAIL_PATTERN.test(configured) ? configured : DEFAULT_RECEIVER;
+}
+
+function safeOrigin(value: unknown): string {
+  try {
+    const url = new URL(clip(value, 200));
+    if (url.protocol !== "http:" && url.protocol !== "https:") return DEFAULT_ORIGIN;
+    return url.origin;
+  } catch {
+    return DEFAULT_ORIGIN;
+  }
 }
 
 export function parseAlert(input: unknown): AlertPayload {
   const source = typeof input === "string" ? (JSON.parse(input) as unknown) : input;
   if (!source || typeof source !== "object") throw new Error("Bildiriş məlumatı oxunmadı.");
   const body = source as Record<string, unknown>;
-  const alertType = clip(body.alertType, 140);
-  const targetEmployee = clip(body.targetEmployee, 180);
-  const details = String(body.details ?? "").trim().slice(0, 2000);
-  const mitreCode = clip(body.mitreCode, 80);
+  const type = body.type === "phishing_trap" ? "phishing_trap" : "security_alert";
+  const employeeName = clip(body.employeeName || body.targetEmployee, 180);
+  const alertType = clip(body.alertType, 140) || (type === "phishing_trap" ? "Fişinq tələsi sınağı" : "Təhlükə bildirişi");
+  const targetEmployee = clip(body.targetEmployee, 180) || employeeName;
+  const details = String(body.details ?? "").trim().slice(0, 2000) || (type === "phishing_trap" ? "Sınaq fişinq məktubu göndərildi." : "");
+  const mitreCode = clip(body.mitreCode, 80) || (type === "phishing_trap" ? "T1566.002 — Spearphishing Link" : "—");
   const timestamp = clip(body.timestamp, 80) || new Date().toLocaleString("az-AZ");
   const risk = Number(body.riskScore);
-  if (!alertType || !targetEmployee || !details) throw new Error("Təhdid növü, hədəf və tədbir mətni mütləqdir.");
+  if (!targetEmployee || !details) throw new Error("Hədəf və tədbir mətni mütləqdir.");
+  if (type === "phishing_trap" && !employeeName) throw new Error("Fişinq tələsi üçün əməkdaş adı mütləqdir.");
   if (!Number.isFinite(risk)) throw new Error("Risk balı rəqəm olmalıdır.");
   const requested = clip(body.recipientEmail, 160);
-  const fallback = clip(process.env.ALERT_RECEIVER_EMAIL, 160) || DEFAULT_RECEIVER;
-  const recipientEmail = requested || fallback;
+  const recipientEmail = requested || fallbackReceiver();
   if (recipientEmail.includes(",") || !EMAIL_PATTERN.test(recipientEmail)) {
     throw new Error("Alıcı e-poçt ünvanı düzgün deyil.");
   }
   return {
+    type,
     alertType,
     targetEmployee,
     riskScore: Math.max(0, Math.min(100, Math.round(risk))),
     details,
-    mitreCode: mitreCode || "—",
+    mitreCode,
     recipientEmail,
     timestamp,
+    employeeName: employeeName || targetEmployee,
+    origin: safeOrigin(body.origin),
   };
+}
+
+function trapLink(alert: AlertPayload): string {
+  const url = new URL(alert.origin);
+  url.searchParams.set("phish_trap", "1");
+  url.searchParams.set("emp", alert.employeeName);
+  return url.toString();
+}
+
+function trapHtml(alert: AlertPayload): string {
+  const link = escapeHtml(trapLink(alert));
+  const name = escapeHtml(alert.employeeName);
+  return `<!DOCTYPE html>
+<html lang="az">
+<body style="margin:0;background:#f4f7fb;padding:24px;font-family:Segoe UI,sans-serif;color:#0f172a;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;">
+    <tr>
+      <td style="padding:28px 32px 8px;">
+        <div style="font-size:12px;letter-spacing:0.14em;color:#0369a1;font-weight:700;">KİBER TƏHLÜKƏSİZLİK</div>
+        <h1 style="margin:10px 0 0;font-size:24px;line-height:1.3;">Hesab təsdiqi tələb olunur</h1>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:8px 32px 28px;font-size:15px;line-height:1.6;color:#334155;">
+        <p>Hörmətli ${name},</p>
+        <p>Korporativ hesabınızın sessiyası təhlükəsizlik yoxlanışına düşüb. Girişin aktiv qalması üçün şəxsiyyətinizi bu gün təsdiqləyin.</p>
+        <p style="margin:28px 0;">
+          <a href="${link}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:10px;font-weight:700;">Təcili Hesab Təsdiqi</a>
+        </p>
+        <p style="font-size:12px;color:#64748b;">Əgər düymə açılmırsa, bu keçidi istifadə edin:<br><a href="${link}" style="color:#0369a1;">${link}</a></p>
+        <p style="margin-top:24px;font-size:12px;color:#94a3b8;">KiberGözətçi sayıqlıq sınağı · ${escapeHtml(alert.timestamp)}</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function trapText(alert: AlertPayload): string {
+  const link = trapLink(alert);
+  return [`Hörmətli ${alert.employeeName},`, "Hesabınızın təsdiqi tələb olunur.", `Təcili Hesab Təsdiqi: ${link}`, "KiberGözətçi sayıqlıq sınağı."].join("\n");
 }
 
 function reportHtml(alert: AlertPayload): string {
@@ -93,7 +154,7 @@ function reportHtml(alert: AlertPayload): string {
     <tr>
       <td style="padding:22px 24px;border-bottom:1px solid #1e293b;">
         <div style="font-size:12px;letter-spacing:0.16em;color:#22d3ee;font-weight:700;">KİBERGÖZƏTÇİ · SOC</div>
-        <div style="margin-top:6px;font-size:22px;font-weight:800;color:#ffffff;">Avtomatik təhlükə bildirişi</div>
+        <div style="margin-top:6px;font-size:22px;font-weight:800;color:#ffffff;">Təhlükəsizlik bildirişi</div>
       </td>
     </tr>
     <tr>
@@ -118,37 +179,44 @@ function reportText(alert: AlertPayload): string {
   ].join("\n");
 }
 
-export async function deliverAlert(input: unknown): Promise<{ recipient: string }> {
-  const alert = parseAlert(input);
-  const user = (process.env.SMTP_USER ?? "").trim();
-  const pass = smtpPassword();
-  if (!user || !pass) throw new Error("SMTP ayarları tapılmadı. .env faylında SMTP_USER və SMTP_PASS yazın.");
-  const transporter = createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: true,
-    auth: { user, pass },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+function resendKey(): string {
+  return (process.env.RESEND_API_KEY ?? "").trim();
+}
+
+function safeMessage(raw: string, key: string): string {
+  return raw.replaceAll(key, "").replace(/\s+/g, " ").trim().slice(0, 280);
+}
+
+async function postResend(to: string, subject: string, html: string, text: string): Promise<{ ok: boolean; status: number; error: string }> {
+  const key = resendKey();
+  if (!key) return { ok: false, status: 500, error: "RESEND_API_KEY tapılmadı. .env faylına yazın." };
+  const response = await fetch(RESEND_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from: FROM, to: [to], subject, html, text }),
   });
-  try {
-    await transporter.sendMail({
-      from: `"KiberGözətçi SOC" <${user}>`,
-      to: alert.recipientEmail,
-      subject: `KiberGözətçi: ${alert.alertType} — ${alert.riskScore}/100`,
-      text: reportText(alert),
-      html: reportHtml(alert),
-    });
-  } catch (error) {
-    const raw = error instanceof Error ? error.message : "";
-    const safe = (pass && raw.includes(pass) ? "" : raw).replace(/\s+/g, " ").trim();
-    if (/535|BadCredentials|Username and Password not accepted/i.test(safe)) {
-      throw new Error("Gmail giriş məlumatını qəbul etmədi. Hesabda yeni tətbiq şifrəsi yaradın və yerli .env faylındakı SMTP_PASS dəyərini yeniləyin.");
-    }
-    throw new Error(safe ? `E-poçt serveri məktubu qəbul etmədi: ${safe.slice(0, 280)}` : "E-poçt serveri məktubu qəbul etmədi.");
-  }
-  return { recipient: alert.recipientEmail };
+  if (response.ok) return { ok: true, status: response.status, error: "" };
+  const payload = (await response.json().catch(() => null)) as { message?: unknown } | null;
+  const message = safeMessage(typeof payload?.message === "string" ? payload.message : "", key);
+  return { ok: false, status: response.status, error: message || "Resend məktubu qəbul etmədi." };
+}
+
+export async function deliverAlert(input: unknown): Promise<{ recipient: string; fallback: boolean }> {
+  const alert = parseAlert(input);
+  const subject = alert.type === "phishing_trap" ? `Təcili: ${alert.employeeName} hesabının təsdiqi` : `KiberGözətçi: ${alert.alertType} — ${alert.riskScore}/100`;
+  const html = alert.type === "phishing_trap" ? trapHtml(alert) : reportHtml(alert);
+  const text = alert.type === "phishing_trap" ? trapText(alert) : reportText(alert);
+  const backup = fallbackReceiver();
+  const first = await postResend(alert.recipientEmail, subject, html, text);
+  if (first.ok) return { recipient: alert.recipientEmail, fallback: false };
+  const canFallback = (first.status === 403 || first.status === 422) && alert.recipientEmail.toLowerCase() !== backup.toLowerCase();
+  if (!canFallback) throw new Error(first.error);
+  const second = await postResend(backup, subject, html, text);
+  if (!second.ok) throw new Error(second.error);
+  return { recipient: backup, fallback: true };
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -158,9 +226,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   }
   try {
     const result = await deliverAlert(req.body);
-    res.status(200).json({ ok: true, recipient: result.recipient });
+    res.status(200).json({ ok: true, recipient: result.recipient, fallback: result.fallback });
   } catch (error) {
     const message = error instanceof Error ? error.message : "E-poçt göndərilmədi.";
-    res.status(message.startsWith("SMTP") || message.startsWith("E-poçt serveri") ? 502 : 400).json({ ok: false, error: message });
+    const clientError = message.includes("mütləqdir") || message.includes("düzgün deyil") || message.includes("oxunmadı") || message.includes("rəqəm");
+    res.status(clientError ? 400 : 502).json({ ok: false, error: message });
   }
 }

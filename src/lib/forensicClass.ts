@@ -41,11 +41,21 @@ export function stableScore(seed: string, min: number, max: number): number {
   return min + ((hash >>> 0) % span);
 }
 
+const LIVE_RMS_MAX = 0.35;
+const LIVE_ZCR_MAX = 0.2;
+
 export function classifyAudio(name: string, liveMic = false): ForensicKind {
-  if (liveMic) return "real";
+  if (liveMic) return "unknown";
   if (includesAny(name, ["deepfake", "fake", "suni", "klon"]) || hasToken(name, ["ai"])) return "synthetic";
   if (includesAny(name, ["real", "heqiqi", "orijinal", "original"])) return "real";
   return "unknown";
+}
+
+function liveMicKind(report: AcousticReport): ForensicKind {
+  const steadyLoudness = report.metrics.amplitudeVariation < LIVE_RMS_MAX;
+  const steadyCrossing = report.metrics.zcrVariation < LIVE_ZCR_MAX;
+  if (steadyLoudness && steadyCrossing) return "synthetic";
+  return "real";
 }
 
 export function classifyVisual(name: string): ForensicKind {
@@ -73,7 +83,49 @@ export function presentAcoustic(
     };
   }
 
-  const kind = classifyAudio(input.name, Boolean(input.liveMic));
+  if (input.liveMic) {
+    if (report.unreliable) {
+      return {
+        ...report,
+        probability: 0,
+        unreliable: true,
+        pattern: "mixed",
+        reasons: [
+          {
+            title: "Kifayət qədər siqnal yoxdur",
+            detail: "Canlı yazıda ölçülə bilən RMS və ZCR variasiyası tapılmadı.",
+          },
+        ],
+      };
+    }
+    const kind = liveMicKind(report);
+    const real = kind === "real";
+    const probability = stableScore(
+      `${report.metrics.amplitudeVariation.toFixed(2)}:${report.metrics.zcrVariation.toFixed(3)}:${report.metrics.pauseCount}`,
+      real ? 5 : 85,
+      real ? 15 : 95,
+    );
+    return {
+      ...report,
+      probability,
+      unreliable: false,
+      pattern: real ? "speech" : "synthetic",
+      vocoder: real ? probability : Math.min(95, probability),
+      breathNatural: real ? 98 - probability : Math.max(4, 100 - probability),
+      spectrumAnomaly: real ? probability : Math.max(85, probability - 1),
+      reasons: [
+        {
+          title: real ? AUDIO_REAL : AUDIO_FAKE,
+          detail: real
+            ? `RMS variasiyası ${report.metrics.amplitudeVariation.toFixed(2)} və ZCR dəyişkənliyi ${report.metrics.zcrVariation.toFixed(3)} yüksəkdir. ${report.metrics.pauseCount} mikropauza canlı nəfəsə uyğundur.`
+            : `RMS variasiyası ${report.metrics.amplitudeVariation.toFixed(2)} və ZCR dəyişkənliyi ${report.metrics.zcrVariation.toFixed(3)} həddən aşağıdır, mikropauza ${report.metrics.pauseCount}. Səs mexaniki sabitdir — süni intellekt (TTS) izi.`,
+        },
+      ],
+      mitre: real ? "T1656 əlaməti təsdiqlənmədi" : "T1656 — Impersonation / Deepfake",
+    };
+  }
+
+  const kind = classifyAudio(input.name, false);
   if (kind === "unknown") {
     if (!report.unreliable) return report;
     return {

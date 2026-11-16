@@ -65,10 +65,13 @@ function drawCells(
   }
 }
 
+const mediaClass = "absolute inset-0 h-full w-full origin-top object-cover object-[center_top]";
+const mediaStyle = { objectPosition: "center top", transform: "scale(1.15)" };
+
 function FaceFrame({ color }: { color: string }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
-      <div className="relative aspect-square h-[68%]">
+    <div className="pointer-events-none absolute inset-0 z-10">
+      <div className="absolute top-[8%] left-1/2 aspect-square h-[70%] -translate-x-1/2">
         <span className={cn("absolute top-0 left-0 h-6 w-6 border-t-2 border-l-2", color)} />
         <span className={cn("absolute top-0 right-0 h-6 w-6 border-t-2 border-r-2", color)} />
         <span className={cn("absolute bottom-0 left-0 h-6 w-6 border-b-2 border-l-2", color)} />
@@ -99,8 +102,15 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
   const [frameReady, setFrameReady] = useState(false);
   const [frameFailed, setFrameFailed] = useState(false);
   const [laser, setLaser] = useState(false);
+  const [shownMedia, setShownMedia] = useState(`${kind}:${url}`);
   const theme = useDocumentTheme();
   const scanning = kind === "image" || kind === "video";
+  const mediaKey = `${kind}:${url}`;
+  if (mediaKey !== shownMedia) {
+    setShownMedia(mediaKey);
+    setFrameReady(false);
+    setFrameFailed(false);
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -109,11 +119,6 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
     observer.observe(canvas);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    setFrameReady(false);
-    setFrameFailed(false);
-  }, [kind, url]);
 
   useEffect(() => {
     if (!scanning || !url) {
@@ -213,7 +218,8 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
           <video
             ref={videoRef}
             src={url}
-            className="hidden"
+            className={cn(mediaClass, frameReady ? "opacity-100" : "opacity-0")}
+            style={mediaStyle}
             muted
             playsInline
             autoPlay
@@ -228,7 +234,20 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
             }}
           />
         ) : null}
-        <canvas ref={canvasRef} className="h-full w-full" />
+        {kind === "image" && url ? (
+          <img
+            src={url}
+            alt=""
+            className={cn(mediaClass, frameReady ? "opacity-100" : "opacity-0")}
+            style={mediaStyle}
+            onLoad={() => setFrameReady(true)}
+            onError={() => {
+              setFrameReady(false);
+              setFrameFailed(true);
+            }}
+          />
+        ) : null}
+        <canvas ref={canvasRef} className={cn("h-full w-full", frameReady && "invisible")} />
         {scanning && url ? <FaceFrame color={frameColor} /> : null}
         {laser ? <div className={cn("animate-scan pointer-events-none absolute inset-x-0 z-20 h-0.5", laserColor)} /> : null}
         <div className={cn("absolute bottom-2 left-2 z-20 max-w-[90%] rounded-lg border bg-slate-950/80 px-2 py-1 text-[10px]", tone === "synthetic" ? "border-red-500/50 text-red-500" : "border-emerald-400/40 text-emerald-400")}>

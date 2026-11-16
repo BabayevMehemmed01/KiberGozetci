@@ -277,6 +277,55 @@ const SUSPICIOUS_HOST =
 const BRAND_HOST = /vergi|bank|gov|asan|maliyye|edovlet|kapital/;
 const BAD_TLD = /\.(xyz|top|tk|gq|ml|cf|click|info|zip|rest|cam|buzz|quest)$/i;
 const SHORTENER = /^(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly|rb\.gy|tiny\.cc)$/i;
+const WHITELIST = ["sirket.az", "google.com", "gov.az"];
+
+function compactName(host: string): string {
+  const labels = host.replace(/^www\./, "").split(".").filter(Boolean);
+  return labels.slice(0, -1).join("").replace(/-/g, "");
+}
+
+function levenshtein(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length === 0) return right.length;
+  if (right.length === 0) return left.length;
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 0; row < left.length; row += 1) {
+    const next = [row + 1];
+    for (let column = 0; column < right.length; column += 1) {
+      const cost = left[row] === right[column] ? 0 : 1;
+      next.push(Math.min(next[column] + 1, previous[column + 1] + 1, previous[column] + cost));
+    }
+    previous = next;
+  }
+  return previous[right.length];
+}
+
+function isWhitelisted(host: string): boolean {
+  const bare = host.replace(/^www\./, "");
+  return WHITELIST.some((brand) => bare === brand || bare.endsWith(`.${brand}`));
+}
+
+function typosquatDistance(host: string): number | null {
+  if (isWhitelisted(host)) return null;
+  const name = compactName(host);
+  if (!name) return null;
+  let best = Number.POSITIVE_INFINITY;
+  for (const brand of WHITELIST) {
+    const brandName = compactName(brand);
+    const brandAll = brand.replace(/[-.]/g, "");
+    best = Math.min(best, levenshtein(name, brandName), levenshtein(name, brandAll));
+  }
+  return best <= 2 ? best : null;
+}
+
+function unknownDomainScore(host: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < host.length; index += 1) {
+    hash ^= host.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 15 + ((hash >>> 0) % 11);
+}
 
 function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; analyzedUrl: string } {
   const trimmed = rawUrl.trim();
@@ -288,21 +337,18 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
   const reasons: string[] = [];
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   let host = "";
-  let path = "";
 
   try {
     const url = new URL(withProtocol);
     host = url.hostname.toLowerCase();
-    path = `${url.pathname}${url.search}`.toLowerCase();
   } catch {
     score += 24;
     reasons.push("Keçid ünvanı standart formata uyğun deyil.");
     return { score, reasons, analyzedUrl: trimmed };
   }
 
-  const full = `${host}${path}`;
-  const trustedHost = host === "sirket.az" || host.endsWith(".sirket.az") || host.endsWith(".gov.az");
-  const suspiciousToken = SUSPICIOUS_HOST.test(full);
+  const trustedHost = isWhitelisted(host);
+  const suspiciousToken = SUSPICIOUS_HOST.test(host);
   const ipHost = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
 
   if (trimmed.includes("@")) {
@@ -346,12 +392,22 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
     score += 12;
     reasons.push("Həddindən artıq uzun alt-domen zənciri.");
   }
-  if (trustedHost && !suspiciousToken && !ipHost) {
+  const lookalike = typosquatDistance(host);
+  if (lookalike !== null) {
+    const lookalikeScore = 22 - lookalike * 2;
+    score = Math.max(score, lookalikeScore);
+    reasons.push("Defis və nöqtə silindikdən sonra domen ağ siyahıdakı ada Levenshtein məsafəsi ilə oxşayır.");
+  }
+  if (trustedHost && !suspiciousToken && !ipHost && lookalike === null) {
     return {
       score: 0,
       reasons: ["Keçid etibarlı daxili və ya rəsmi domenə aparır."],
       analyzedUrl: trimmed,
     };
+  }
+  if (!trustedHost && score < 15) {
+    score = unknownDomainScore(host);
+    reasons.push("Naməlum/Yoxlanılmamış domen. Ağ siyahıda olmadığı üçün baza riski tətbiq edildi.");
   }
   if (reasons.length === 0) {
     reasons.push("Keçiddə açıq saxtakarlıq əlaməti görünmür.");

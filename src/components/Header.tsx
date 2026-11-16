@@ -1,4 +1,4 @@
-import { AudioWaveform, BrainCircuit, Mail, Radar, Shield, Siren, SquareActivity } from "lucide-react";
+import { AudioWaveform, Mail, Radar, Siren, SquareActivity } from "lucide-react";
 import type { AppTab } from "../types.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { cn } from "../lib/utils.ts";
@@ -18,9 +18,8 @@ export function Header() {
       <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex items-center gap-3">
-            <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_28px_rgba(6,182,212,0.28)]">
-              <Shield className="h-7 w-7 text-cyan-300" strokeWidth={1.6} />
-              <BrainCircuit className="absolute h-3.5 w-3.5 text-cyan-50" strokeWidth={2.2} />
+            <div className="w-12 h-12 shrink-0 rounded-full overflow-hidden border border-cyan-400/60 shadow-[0_0_18px_rgba(6,182,212,0.45)]">
+              <img src="/logo.jpg" alt="Neyron Baxış" className="w-full h-full object-cover scale-125" />
             </div>
             <div>
               <h1 className="text-lg font-extrabold tracking-tight text-white">KiberGözətçi</h1>

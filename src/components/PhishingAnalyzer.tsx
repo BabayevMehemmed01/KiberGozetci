@@ -66,7 +66,7 @@ export function PhishingAnalyzer() {
         <p className="text-xs font-bold tracking-[0.18em] text-cyan-300">1-Cİ MÜDAFİƏ XƏTTİ</p>
         <h2 className="mt-1 text-xl font-bold text-white">Fişinq və sosial mühəndislik analizatoru</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
-          Kiber Divar mətni həm orijinal, həm də diakritiksiz formada yoxlayır. Şantaj, maliyyə, şifrə, zərərli fayl, qurum təqlidi və tələskənlik izləri qırmızı ilə işarələnir.
+          Mətn əvvəlcə yayınma izlərindən (p.u.l, h3sab, k a r t) təmizlənir, sonra dörd niyyət vektoru birlikdə çəkilir. Tək söz kritik deyil; tələskənlik maliyyə və ya şifrə tələbi ilə birləşəndə sinerji işə düşür.
         </p>
       </div>
 
@@ -145,32 +145,22 @@ export function PhishingAnalyzer() {
                   <div className="font-mono text-4xl font-semibold">{report.overall}%</div>
                   <div className="text-right text-sm font-bold">{quarantine.status}</div>
                 </div>
-                <p className="mt-1 text-xs opacity-80">Ümumi təhlükə faizi</p>
+                <p className="mt-1 text-xs opacity-80">{report.payloadCarrier ? "Zərərli Payload Daşıyıcısı" : "Ümumi təhlükə faizi"}</p>
               </div>
               {dirty ? <p className="text-xs text-amber-300">Mətn dəyişib. Nəticəni yeniləmək üçün «Analiz Et» düyməsinə basın.</p> : null}
-              <Meter label="Tələskənlik taktikası" value={report.urgency} intent="risk" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                {report.vectors.map((vector) => (
+                  <Meter key={vector.id} label={`${vector.id} ${vector.name}`} value={vector.score} hint={vector.base ? `Baza çəkisi ${vector.base}` : undefined} intent="risk" />
+                ))}
+              </div>
               <Meter label="Saxta domen riski" value={report.domain} intent="risk" />
-              <Meter label="Üslub uyğunsuzluğu" value={report.style} intent="risk" />
-              <Meter label="Məlumat oğurluğu ehtimalı" value={report.theft} intent="risk" />
               <DefenseInsight
                 techniques={
                   report.techniques.length > 0
                     ? report.techniques
                     : [{ code: "—", name: "Uyğun hücum texnikası yoxdur" }]
                 }
-                steps={[
-                  ...(report.intents.length > 0 ? report.intents : ["Semantik niyyət tapılmadı. Mətn rəsmi və ya neytral görünür."]),
-                  `Təcililik balı ${report.urgency} ümumi riskə 36% çəki ilə daxil olur.`,
-                  `Domen balı ${report.domain} 30% çəki daşıyır.`,
-                  `Üslub balı ${report.style} 16%, oğurluq balı ${report.theft} 18% çəki daşıyır.`,
-                  report.critical && report.quarantine === "alindi"
-                    ? `Cəm ${report.overall}% kritik niyyət həddindədir. Kiber Divar karantin səviyyəsindən (${quarantineThreshold}%) asılı olmayaraq mesajı avtomatik təcrid edir.`
-                    : report.quarantine === "alindi"
-                      ? `Cəm ${report.overall}% karantin həddi olan ${quarantineThreshold}-i keçir, ona görə mesaj təcrid olunur.`
-                      : report.quarantine === "nezaret"
-                        ? `Cəm ${report.overall}% nəzarət zolağındadır və ${quarantineThreshold}% karantin həddinə çatmır.`
-                        : `Cəm ${report.overall}% təhlükəsiz həddin altındadır.`,
-                ]}
+                steps={report.reasoning}
               />
               <button
                 type="button"

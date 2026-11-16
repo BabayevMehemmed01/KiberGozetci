@@ -10,6 +10,14 @@ export interface AttackTechnique {
   name: string;
 }
 
+export interface IntentVector {
+  id: "V1" | "V2" | "V3" | "V4";
+  name: string;
+  score: number;
+  base: number;
+  terms: string[];
+}
+
 export interface PhishingReport {
   overall: number;
   urgency: number;
@@ -24,6 +32,10 @@ export interface PhishingReport {
   intents: string[];
   techniques: AttackTechnique[];
   critical: boolean;
+  vectors: IntentVector[];
+  reasoning: string[];
+  payloadCarrier: boolean;
+  obfuscated: boolean;
 }
 
 interface Signal {
@@ -359,10 +371,12 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
   const reasons: string[] = [];
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   let host = "";
+  let pathname = "";
 
   try {
     const url = new URL(withProtocol);
     host = url.hostname.toLowerCase();
+    pathname = url.pathname.toLowerCase();
   } catch {
     score += 24;
     reasons.push("Keçid ünvanı standart formata uyğun deyil.");
@@ -372,6 +386,11 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
   const trustedHost = isWhitelisted(host);
   const suspiciousToken = SUSPICIOUS_HOST.test(host);
   const ipHost = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+  const payloadFile = /\.(?:exe|scr|zip|apk|php)$/i.test(pathname);
+  if (payloadFile) {
+    score += 70;
+    reasons.push("Keçidin sonunda icra, arxiv və ya skript uzantısı var (.exe, .scr, .zip, .apk, .php).");
+  }
 
   if (trimmed.includes("@")) {
     score += 34;
@@ -420,7 +439,7 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
     score = Math.max(score, lookalikeScore);
     reasons.push("Defis və nöqtə silindikdən sonra domen ağ siyahıdakı ada Levenshtein məsafəsi ilə oxşayır.");
   }
-  if (trustedHost && !suspiciousToken && !ipHost && lookalike === null) {
+  if (trustedHost && !suspiciousToken && !ipHost && lookalike === null && !payloadFile) {
     return {
       score: 0,
       reasons: ["Keçid etibarlı daxili və ya rəsmi domenə aparır."],
@@ -909,6 +928,275 @@ function assessLures(text: string) {
   };
 }
 
+const LEET: Record<string, string> = { "3": "e", "0": "o", "1": "i", "@": "a" };
+const EVASIVE_PUNCT = /[.,_*/-]/;
+
+interface CleanChar {
+  ch: string;
+  from: number;
+}
+
+function deobfuscate(raw: string): { text: string; origins: number[]; obfuscated: boolean } {
+  const normalized = normalizeText(raw);
+  const kept: CleanChar[] = [];
+  let obfuscated = false;
+  for (let index = 0; index < normalized.length; index += 1) {
+    let ch = normalized[index] ?? "";
+    const leet = LEET[ch];
+    const prev = normalized[index - 1];
+    const next = normalized[index + 1];
+    const besideLetter = isLetter(prev) || isLetter(next);
+    if (leet && besideLetter && ch !== "@") {
+      ch = leet;
+      obfuscated = true;
+    } else if (ch === "@" && isLetter(prev) && isLetter(next)) {
+      let email = false;
+      for (let cursor = index; cursor >= 0 && normalized[cursor] !== " "; cursor -= 1) {
+        if (normalized[cursor] === ".") email = true;
+      }
+      for (let cursor = index; cursor < normalized.length && normalized[cursor] !== " "; cursor += 1) {
+        if (normalized[cursor] === ".") email = true;
+      }
+      if (!email) {
+        ch = "a";
+        obfuscated = true;
+      }
+    }
+    if (EVASIVE_PUNCT.test(ch)) {
+      const prev = normalized[index - 1];
+      const next = normalized[index + 1];
+      if (isLetter(prev) && isLetter(next)) obfuscated = true;
+      continue;
+    }
+    kept.push({ ch, from: index });
+  }
+  const compact: CleanChar[] = [];
+  for (const item of kept) {
+    if (item.ch === " " || item.ch === "\n" || item.ch === "\t" || item.ch === "\r") {
+      if (compact.length === 0 || compact[compact.length - 1]?.ch === " ") continue;
+      compact.push({ ch: " ", from: item.from });
+      continue;
+    }
+    compact.push(item);
+  }
+  const isolated = (index: number) => {
+    const ch = compact[index]?.ch;
+    if (!isLetter(ch)) return false;
+    const prev = compact[index - 1]?.ch;
+    const next = compact[index + 1]?.ch;
+    return (index === 0 || prev === " ") && (next === undefined || next === " ");
+  };
+  const merged: CleanChar[] = [];
+  let index = 0;
+  while (index < compact.length) {
+    if (isolated(index)) {
+      const run = [compact[index]];
+      let cursor = index;
+      while (compact[cursor + 1]?.ch === " " && isolated(cursor + 2)) {
+        run.push(compact[cursor + 2]);
+        cursor += 2;
+      }
+      if (run.length >= 3) {
+        obfuscated = true;
+        merged.push(...run);
+        index = cursor + 1;
+        continue;
+      }
+    }
+    const item = compact[index];
+    if (item) merged.push(item);
+    index += 1;
+  }
+  return {
+    text: merged.map((item) => item.ch).join(""),
+    origins: merged.map((item) => item.from),
+    obfuscated,
+  };
+}
+
+type VectorId = "V1" | "V2" | "V3" | "V4";
+
+interface IntentTerm {
+  vector: VectorId;
+  term: string;
+  label: string;
+}
+
+const INTENT_TERMS: IntentTerm[] = [
+  { vector: "V1", term: "bitcoin", label: "bitcoin" },
+  { vector: "V1", term: "crypto", label: "crypto" },
+  { vector: "V1", term: "transfer", label: "transfer" },
+  { vector: "V1", term: "usdt", label: "usdt" },
+  { vector: "V1", term: "qazanc", label: "qazanc" },
+  { vector: "V1", term: "invest", label: "invest" },
+  { vector: "V1", term: "kocur", label: "köçürmə" },
+  { vector: "V1", term: "gonder", label: "göndər" },
+  { vector: "V1", term: "odenis", label: "ödəniş" },
+  { vector: "V1", term: "money", label: "money" },
+  { vector: "V1", term: "wire", label: "wire" },
+  { vector: "V1", term: "kart", label: "kart" },
+  { vector: "V1", term: "hesab", label: "hesab" },
+  { vector: "V1", term: "pul", label: "pul" },
+  { vector: "V1", term: "btc", label: "btc" },
+  { vector: "V2", term: "immediately", label: "immediately" },
+  { vector: "V2", term: "gecikmeden", label: "gecikmədən" },
+  { vector: "V2", term: "blackmail", label: "blackmail" },
+  { vector: "V2", term: "deadline", label: "deadline" },
+  { vector: "V2", term: "shantaj", label: "şantaj" },
+  { vector: "V2", term: "santaj", label: "şantaj" },
+  { vector: "V2", term: "urgent", label: "urgent" },
+  { vector: "V2", term: "tecili", label: "təcili" },
+  { vector: "V2", term: "derhal", label: "dərhal" },
+  { vector: "V2", term: "nude", label: "nude" },
+  { vector: "V2", term: "ifsa", label: "ifşa" },
+  { vector: "V2", term: "asap", label: "asap" },
+  { vector: "V2", term: "tez", label: "tez" },
+  { vector: "V3", term: "password", label: "password" },
+  { vector: "V3", term: "tesdiq", label: "təsdiqlə" },
+  { vector: "V3", term: "verify", label: "verify" },
+  { vector: "V3", term: "klikle", label: "kliklə" },
+  { vector: "V3", term: "login", label: "login" },
+  { vector: "V3", term: "sifre", label: "şifrə" },
+  { vector: "V3", term: "parol", label: "parol" },
+  { vector: "V3", term: "klik", label: "klik" },
+  { vector: "V3", term: "otp", label: "otp" },
+  { vector: "V4", term: "direktor", label: "direktor" },
+  { vector: "V4", term: "rehber", label: "rəhbər" },
+  { vector: "V4", term: "admin", label: "admin" },
+  { vector: "V4", term: "vergi", label: "vergi" },
+  { vector: "V4", term: "polis", label: "polis" },
+  { vector: "V4", term: "ceo", label: "ceo" },
+];
+
+const VECTOR_META: Record<VectorId, { name: string; base: number; code: string; technique: string }> = {
+  V1: { name: "Financial/Crypto Request", base: 40, code: "T1566.002", technique: "Spearphishing Link" },
+  V2: { name: "Urgency/Coercion", base: 30, code: "T1204", technique: "User Execution" },
+  V3: { name: "Credential Theft/Action", base: 40, code: "T1566.002", technique: "Spearphishing Link" },
+  V4: { name: "Authority/Impersonation", base: 20, code: "T1534", technique: "Internal Spearphishing" },
+};
+
+const BLACKMAIL_TERMS = new Set(["santaj", "shantaj", "ifsa", "nude", "blackmail"]);
+
+function termHits(text: string, origins: number[], term: string): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = [];
+  let from = 0;
+  while (from < text.length) {
+    const index = text.indexOf(term, from);
+    if (index < 0) break;
+    const before = text[index - 1];
+    const after = text[index + term.length];
+    const word = text.slice(index, wordEnd(text, index));
+    const prefix = term.length >= 4 || term === "pul" || term === "tez";
+    const allowed = !isLetter(before) && (prefix || !isLetter(after)) && !(term === "hesab" && word.startsWith("hesabat")) && !(term === "invest" && !investWord(word));
+    if (allowed) {
+      const originStart = origins[index];
+      const originEnd = origins[index + term.length - 1];
+      if (originStart !== undefined && originEnd !== undefined) spans.push({ start: originStart, end: originEnd + 1 });
+    }
+    from = index + Math.max(1, term.length);
+  }
+  return spans;
+}
+
+function assessIntent(raw: string, hasUrl: boolean) {
+  const cleaned = deobfuscate(raw);
+  const grouped: Record<VectorId, { labels: string[]; spans: { start: number; end: number }[]; blackmail: number }> = {
+    V1: { labels: [], spans: [], blackmail: 0 },
+    V2: { labels: [], spans: [], blackmail: 0 },
+    V3: { labels: [], spans: [], blackmail: 0 },
+    V4: { labels: [], spans: [], blackmail: 0 },
+  };
+  for (const item of INTENT_TERMS) {
+    const spans = termHits(cleaned.text, cleaned.origins, item.term);
+    if (spans.length === 0) continue;
+    const bucket = grouped[item.vector];
+    if (!bucket.labels.includes(item.label)) bucket.labels.push(item.label);
+    bucket.spans.push(spans[0]);
+    if (BLACKMAIL_TERMS.has(item.term)) bucket.blackmail += 1;
+  }
+  const scoreOf = (id: VectorId) => {
+    const count = grouped[id].labels.length;
+    if (count === 0) return 0;
+    return clamp(VECTOR_META[id].base + (count - 1) * 22);
+  };
+  const v1 = scoreOf("V1");
+  const v2 = scoreOf("V2");
+  const v3 = scoreOf("V3");
+  const v4 = scoreOf("V4");
+  const blackmailScore = grouped.V2.blackmail === 0 ? 0 : clamp(30 + (grouped.V2.blackmail - 1) * 32);
+  const active = [v1, v2, v3, v4].filter((score) => score > 0);
+  const financialPair = v2 > 0 && v1 > 0;
+  const credentialPair = v2 > 0 && v3 > 0;
+  const synergy = financialPair || credentialPair;
+  let semantic = 0;
+  let formula = "";
+  if (synergy) {
+    const paired = (v1 > 0 ? v1 : 0) + (v3 > 0 ? v3 : 0);
+    semantic = paired + v2 * 1.5 + (v4 > 0 ? v4 * 0.5 : 0);
+    formula = `${v1 > 0 ? `V1 ${v1}` : ""}${v1 > 0 && v3 > 0 ? " + " : ""}${v3 > 0 ? `V3 ${v3}` : ""} + V2 ${v2} × 1.5`;
+    if (v4 > 0) formula += ` + V4 ${v4} × 0.5`;
+  } else if (active.length >= 2) {
+    semantic = (v1 + v2 + v3 + v4) * 0.9;
+    formula = `V1 ${v1} + V2 ${v2} + V3 ${v3} + V4 ${v4}`;
+  } else if (active.length === 1) {
+    const onlyId = (["V1", "V2", "V3", "V4"] as VectorId[]).find((id) => scoreOf(id) > 0);
+    const count = onlyId ? grouped[onlyId].labels.length : 0;
+    semantic = count >= 2 ? active[0] : Math.min(12, Math.round(active[0] * 0.25));
+    formula = count >= 2 ? `${onlyId} ${active[0]}` : `${onlyId} tək söz, çarpan yoxdur`;
+  }
+  semantic = clamp(Math.round(semantic));
+  const payloadCarrier = hasUrl && (v1 > 60 || blackmailScore > 60);
+  if (payloadCarrier) semantic = clamp(Math.max(semantic, 85));
+  const vectors: IntentVector[] = (["V1", "V2", "V3", "V4"] as VectorId[]).map((id) => ({
+    id,
+    name: VECTOR_META[id].name,
+    score: scoreOf(id),
+    base: VECTOR_META[id].base,
+    terms: grouped[id].labels,
+  }));
+  const expose = synergy || payloadCarrier || active.length >= 2 || (active.length === 1 && grouped[(["V1", "V2", "V3", "V4"] as VectorId[]).find((id) => scoreOf(id) > 0) ?? "V1"].labels.length >= 2);
+  const reasoning = [
+    cleaned.obfuscated
+      ? "Addım 1: Mətndəki gizlədilmiş hərflər (obfuscation) və Leetspeak təmizləndi."
+      : "Addım 1: Mətn diakritik və böyük-kiçik hərf fərqi nəzərə alınaraq normallaşdırıldı. Yayınma izi tapılmadı.",
+    financialPair
+      ? "Addım 2: Yüksək tələskənlik (Urgency) və maliyyə tələbi (Financial Intent) arasında korrelyasiya aşkarlandı."
+      : credentialPair
+        ? "Addım 2: Yüksək tələskənlik (Urgency) və şifrə tələbi (Credential Intent) arasında korrelyasiya aşkarlandı."
+        : "Addım 2: Təhdid vektorları ayrı-ayrı ölçüldü. Tələskənlik ilə maliyyə və ya şifrə tələbi arasında sinerji yoxdur.",
+    synergy && v4 > 0
+      ? `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}. CEO fraud (Rəhbər təqlidi) taktikası tətbiq olunur.`
+      : synergy
+        ? `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}.`
+        : active.length === 0
+          ? "Addım 3: Kontekstual niyyət matrisi boşdur. Ümumi risk aşağı saxlanıldı."
+          : `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}. Tək vektor kritik həddə çatdırılmadı.`,
+  ];
+  if (payloadCarrier) {
+    reasoning.push("Addım 4: Keçid Zero-Trust yoxlamasından keçmədi. Niyyət 60%-i keçdiyi üçün məktub, domen təmiz olsa belə, Zərərli Payload Daşıyıcısı kimi 85%+ risk aldı.");
+  }
+  const techniques: AttackTechnique[] = [];
+  for (const vector of vectors) {
+    if (vector.score === 0 || !expose) continue;
+    const meta = VECTOR_META[vector.id];
+    const existing = techniques.find((item) => item.code === meta.code);
+    const label = `${vector.id} ${meta.technique}`;
+    if (!existing) techniques.push({ code: meta.code, name: label });
+    else if (!existing.name.includes(vector.id)) existing.name = `${existing.name} · ${label}`;
+  }
+  return {
+    vectors,
+    reasoning,
+    overall: semantic,
+    payloadCarrier,
+    obfuscated: cleaned.obfuscated,
+    synergy,
+    spans: expose ? (["V1", "V2", "V3", "V4"] as VectorId[]).flatMap((id) => grouped[id].spans) : [],
+    labels: expose ? (["V1", "V2", "V3", "V4"] as VectorId[]).flatMap((id) => grouped[id].labels) : [],
+    techniques,
+  };
+}
+
 export function analyzePhishing(text: string, url: string, threshold = 65): PhishingReport {
   const hits = findHits(text);
   const signals = uniqueSignals(hits);
@@ -953,10 +1241,26 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
     if (intent.pressure >= 1 || wall.pressure >= 1) style = clamp(Math.max(style, 36));
   }
 
+  const urlsPresent = urls.some((item) => item.trim().length > 0);
+  const semantic = assessIntent(text, urlsPresent);
+  overall = clamp(Math.max(overall, semantic.overall));
+  if (domain.reasons.some((reason) => reason.includes(".exe"))) overall = clamp(Math.max(overall, 72));
+  urgency = clamp(Math.max(urgency, semantic.vectors.find((vector) => vector.id === "V2")?.score ?? 0));
+  theft = clamp(Math.max(theft, semantic.vectors.find((vector) => vector.id === "V1")?.score ?? 0, semantic.vectors.find((vector) => vector.id === "V3")?.score ?? 0));
+  if (semantic.synergy) style = clamp(Math.max(style, 36));
+
   const line = Math.min(85, Math.max(50, Math.round(Number.isFinite(threshold) ? threshold : 65)));
-  const critical = wall.forced || intent.floor >= 84 || lure.floor >= 84 || overall >= 84;
-  const quarantine = wall.forced || intent.floor >= 84 || lure.floor >= 84 || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
+  const critical = wall.forced || intent.floor >= 84 || lure.floor >= 84 || semantic.payloadCarrier || semantic.synergy || overall >= 84;
+  const quarantine = wall.forced || intent.floor >= 84 || lure.floor >= 84 || semantic.payloadCarrier || semantic.synergy || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
   const techniques = [...wall.techniques];
+  for (const technique of semantic.techniques) {
+    const existing = techniques.find((item) => item.code === technique.code);
+    if (!existing) techniques.push(technique);
+    else if (!existing.name.includes(technique.name)) existing.name = `${existing.name} · ${technique.name}`;
+  }
+  if (domain.reasons.some((reason) => reason.includes(".exe")) && !techniques.some((item) => item.code === "T1486")) {
+    techniques.push({ code: "T1486", name: "Data Encrypted for Impact" });
+  }
   for (const technique of lure.techniques) {
     if (!techniques.some((item) => item.code === technique.code)) techniques.push(technique);
   }
@@ -968,7 +1272,9 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   }
   const pressureWords = signals.map((signal) => `«${signal.label}»`);
   const findings = [
+    ...semantic.reasoning,
     ...intents,
+    ...(semantic.payloadCarrier ? ["Zərərli Payload Daşıyıcısı: maliyyə və ya şantaj niyyəti 60%-i keçir, keçid təmiz domen olsa belə məktub 85%+ risk alır."] : []),
     ...(wall.forced || intent.floor >= 84 ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
     ...(pressureWords.length > 0 ? [`Təzyiq və ya oğurluq sözləri: ${pressureWords.join(", ")}`] : []),
     ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
@@ -986,12 +1292,16 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
     style,
     theft,
     quarantine,
-    highlights: buildHighlights(text, markers, [...wall.spans, ...lure.spans]),
-    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels])],
+    highlights: buildHighlights(text, markers, [...wall.spans, ...lure.spans, ...semantic.spans]),
+    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels, ...semantic.labels])],
     findings,
     analyzedUrl: domain.analyzedUrl,
     intents,
     techniques,
     critical,
+    vectors: semantic.vectors,
+    reasoning: semantic.reasoning,
+    payloadCarrier: semantic.payloadCarrier,
+    obfuscated: semantic.obfuscated,
   };
 }

@@ -251,6 +251,7 @@ function matchAt(folded: string, index: number, phrase: string): boolean {
   const word = folded.slice(index, wordEnd(folded, index));
   if (phrase === "hesab" && word.startsWith("hesabat")) return false;
   if (phrase === "invest" && !investWord(word)) return false;
+  if (phrase === "gonder" && (word.startsWith("gonderici") || word.startsWith("gonderen"))) return false;
   return true;
 }
 
@@ -361,35 +362,169 @@ function unknownDomainScore(host: string): number {
   return 15 + ((hash >>> 0) % 11);
 }
 
-function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; analyzedUrl: string } {
+interface DomainReport {
+  score: number;
+  reasons: string[];
+  analyzedUrl: string;
+  executable: boolean;
+  documentation: boolean;
+}
+
+const DOC_HOST = /\.(?:example|invalid|test|localhost)$/i;
+const SPOOF_BRANDS = ["microsoft", "office", "outlook", "windows", "google", "apple", "paypal", "amazon", "facebook", "linkedin", "dhl", "fedex"];
+const REDIRECT_KEYS = ["next", "url", "redirect", "redir", "dest", "destination", "goto", "return", "continue", "target"];
+
+function rawHostname(input: string): string {
+  const stripped = input.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const authority = (stripped.split(/[/?#]/)[0] ?? "").trim();
+  const hostport = authority.includes("@") ? authority.slice(authority.lastIndexOf("@") + 1) : authority;
+  return hostport.replace(/:\d+$/, "").replace(/\.$/, "");
+}
+
+function isRfc5737(host: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!match) return false;
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  const c = Number(match[3]);
+  if (a === 192 && b === 0 && c === 2) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  return false;
+}
+
+function isDocumentationHost(host: string): boolean {
+  const bare = host.replace(/^www\./, "").toLowerCase();
+  return DOC_HOST.test(bare) || bare === "example.com" || bare.includes("numune-kecid") || isRfc5737(bare);
+}
+
+function decodeTarget(value: string): string {
+  let current = value.trim();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+function hostOfTarget(value: string): string {
+  const decoded = decodeTarget(value);
+  if (!decoded) return "";
+  try {
+    const withProtocol = /^https?:\/\//i.test(decoded) ? decoded : `http://${decoded}`;
+    return new URL(withProtocol).hostname.toLowerCase();
+  } catch {
+    return rawHostname(decoded).toLowerCase();
+  }
+}
+
+function brandSubdomain(host: string): { brand: string; registrable: string } | null {
+  const labels = host.replace(/^www\./, "").split(".").filter(Boolean);
+  if (labels.length < 3) return null;
+  const registrable = labels.slice(-2).join(".");
+  const left = labels.slice(0, -2);
+  for (const brand of SPOOF_BRANDS) {
+    const used = left.some((label) => label === brand || label.startsWith(`${brand}-`));
+    if (used && !registrable.startsWith(`${brand}.`)) return { brand, registrable };
+  }
+  return null;
+}
+
+function analyzeDomain(rawUrl: string): DomainReport {
   const trimmed = rawUrl.trim();
   if (!trimmed) {
-    return { score: 0, reasons: ["Keçid daxil edilməyib, domen riski sıfır qəbul edildi."], analyzedUrl: "" };
+    return {
+      score: 0,
+      reasons: ["Keçid daxil edilməyib, domen riski sıfır qəbul edildi."],
+      analyzedUrl: "",
+      executable: false,
+      documentation: false,
+    };
   }
 
-  let score = 0;
-  const reasons: string[] = [];
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  let host = "";
-  let pathname = "";
-
+  let url: URL;
   try {
-    const url = new URL(withProtocol);
-    host = url.hostname.toLowerCase();
-    pathname = url.pathname.toLowerCase();
+    url = new URL(withProtocol);
   } catch {
-    score += 24;
-    reasons.push("Keçid ünvanı standart formata uyğun deyil.");
-    return { score, reasons, analyzedUrl: trimmed };
+    return {
+      score: 24,
+      reasons: ["Keçid ünvanı standart formata uyğun deyil."],
+      analyzedUrl: trimmed,
+      executable: false,
+      documentation: false,
+    };
   }
 
+  const host = url.hostname.toLowerCase();
+  const rawHost = rawHostname(trimmed);
+  const pathname = url.pathname.toLowerCase();
+  const documentation = isDocumentationHost(host) || isDocumentationHost(rawHost);
+  const reasons: string[] = [];
+  let score = 0;
+  const execMatch = pathname.match(/\.(exe|scr|bat|vbs)$/i);
+  const executable = execMatch !== null;
   const trustedHost = isWhitelisted(host);
   const suspiciousToken = SUSPICIOUS_HOST.test(host);
   const ipHost = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
-  const payloadFile = /\.(?:exe|scr|zip|apk|php)$/i.test(pathname);
-  if (payloadFile) {
-    score += 70;
-    reasons.push("Keçidin sonunda icra, arxiv və ya skript uzantısı var (.exe, .scr, .zip, .apk, .php).");
+
+  if (documentation) reasons.push("Test/sənədləşdirmə domeni və ya IP-si (reputasiya neytral)");
+
+  const mixedScript = /[a-z]/i.test(rawHost) && /[\u0400-\u04FF]/.test(rawHost);
+  const nonAscii = /[^\u0000-\u007F]/.test(rawHost);
+  if (mixedScript || nonAscii || host.includes("xn--")) {
+    reasons.push(`Qarışıq əlifba (Homoglyph) maskalanması. IDNA/Punycode: ${host}`);
+    if (!documentation) score += mixedScript || nonAscii ? 44 : 36;
+  }
+
+  let externalRedirect = false;
+  for (const key of REDIRECT_KEYS) {
+    const value = url.searchParams.get(key);
+    if (!value) continue;
+    const inner = hostOfTarget(value);
+    if (!inner) continue;
+    reasons.push(`Daxili yönləndirmə hədəfi aşkarlandı: ${inner}`);
+    if (!documentation && !isDocumentationHost(inner) && inner !== host) {
+      externalRedirect = true;
+      score += 18;
+    }
+  }
+
+  const spoof = brandSubdomain(host);
+  if (spoof) {
+    reasons.push(`Əsas domen (registrable) ${spoof.registrable} ünvanıdır. Brend adı (${spoof.brand}) aldadıcı alt-domen kimi işlədilib.`);
+    if (!documentation) score += 36;
+  }
+
+  if (url.port && url.port !== "80" && url.port !== "443") {
+    reasons.push(`Qeyri-standart port (:${url.port}) istifadə olunub`);
+  }
+
+  if (SHORTENER.test(host)) {
+    reasons.push("Qısaldılmış keçid: final təyinat yeri maskalanıb");
+    return {
+      score: clamp(Math.min(55, Math.max(45, score > 0 ? Math.max(score, 50) : 50))),
+      reasons,
+      analyzedUrl: trimmed,
+      executable,
+      documentation: false,
+    };
+  }
+
+  if (documentation) {
+    return { score: 0, reasons, analyzedUrl: trimmed, executable: false, documentation: true };
+  }
+
+  if (execMatch) {
+    score += 55;
+    reasons.push(`Keçid icra olunan fayla aparır (.${execMatch[1].toLowerCase()}).`);
+  } else if (/\.(?:zip|pdf)$/i.test(pathname)) {
+    reasons.push("PDF və ya ZIP uzantısı təkbaşına zərərli hökm yaratmır.");
   }
 
   if (trimmed.includes("@")) {
@@ -403,19 +538,6 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
   if (BAD_TLD.test(host)) {
     score += 42;
     reasons.push("Yüksək riskli domen sonluğu aşkarlandı (.xyz, .top və ya oxşarı).");
-  }
-  const hasLatin = /[a-z]/i.test(host);
-  const hasCyrillic = /[\u0400-\u04FF]/.test(host);
-  if (hasLatin && hasCyrillic) {
-    score += 44;
-    reasons.push("Kiril və latın hərfləri qarışdırılmış saxta domen.");
-  } else if (host.includes("xn--") || hasCyrillic) {
-    score += 36;
-    reasons.push("Oxşar hərf dəyişikliyi: punycode və ya kiril simvol maskalanması.");
-  }
-  if (SHORTENER.test(host)) {
-    score += 58;
-    reasons.push("Qısaldılmış keçid (bit.ly və ya oxşarı) hədəfi gizlədir.");
   }
   if (/\d/.test(host) && BRAND_HOST.test(host)) {
     score += 22;
@@ -439,22 +561,18 @@ function analyzeDomain(rawUrl: string): { score: number; reasons: string[]; anal
     score = Math.max(score, lookalikeScore);
     reasons.push("Defis və nöqtə silindikdən sonra domen ağ siyahıdakı ada Levenshtein məsafəsi ilə oxşayır.");
   }
-  if (trustedHost && !suspiciousToken && !ipHost && lookalike === null && !payloadFile) {
-    return {
-      score: 0,
-      reasons: ["Keçid etibarlı daxili və ya rəsmi domenə aparır."],
-      analyzedUrl: trimmed,
-    };
+  if (trustedHost && !suspiciousToken && !ipHost && lookalike === null && !executable && !externalRedirect && !spoof) {
+    const trustedReasons = ["Keçid etibarlı daxili və ya rəsmi domenə aparır."];
+    if (url.port && url.port !== "80" && url.port !== "443") trustedReasons.push(`Qeyri-standart port (:${url.port}) istifadə olunub`);
+    return { score: 0, reasons: trustedReasons, analyzedUrl: trimmed, executable: false, documentation: false };
   }
   if (!trustedHost && score < 15) {
     score = unknownDomainScore(host);
     reasons.push("Naməlum/Yoxlanılmamış domen. Ağ siyahıda olmadığı üçün baza riski tətbiq edildi.");
   }
-  if (reasons.length === 0) {
-    reasons.push("Keçiddə açıq saxtakarlıq əlaməti görünmür.");
-  }
+  if (reasons.length === 0) reasons.push("Keçiddə açıq saxtakarlıq əlaməti görünmür.");
 
-  return { score: clamp(score), reasons, analyzedUrl: trimmed };
+  return { score: clamp(score), reasons, analyzedUrl: trimmed, executable, documentation: false };
 }
 
 const URL_IN_TEXT =
@@ -733,7 +851,8 @@ function scanRoots(text: string, roots: WallRoot[]): WallHit[] {
       const after = text[index + item.root.length];
       const word = text.slice(index, wordEnd(text, index));
       const end = item.prefix && isLetter(after) ? wordEnd(text, index) : index + item.root.length;
-      const allowed = !isLetter(before) && (item.prefix || !isLetter(after)) && !(item.root === "hesab" && word.startsWith("hesabat"));
+      const sender = item.root === "gonder" && (word.startsWith("gonderici") || word.startsWith("gonderen"));
+      const allowed = !isLetter(before) && (item.prefix || !isLetter(after)) && !(item.root === "hesab" && word.startsWith("hesabat")) && !sender;
       if (allowed && !overlaps(taken, index, end)) {
         taken.push({ start: index, end });
         hits.push({ kind: item.kind, role: item.role, start: index, end, root: item.root });
@@ -746,7 +865,7 @@ function scanRoots(text: string, roots: WallRoot[]): WallHit[] {
 
 function scanExtensions(text: string): WallHit[] {
   const hits: WallHit[] = [];
-  for (const match of text.matchAll(/\.(?:exe|zip|rar|scr|apk|bat)(?!\p{L})/giu)) {
+  for (const match of text.matchAll(/\.(?:exe|scr|bat|vbs|apk)(?!\p{L})/giu)) {
     if (match.index === undefined) continue;
     hits.push({
       kind: "malware",
@@ -803,13 +922,13 @@ function assessCyberWall(text: string, markers: Marker[]) {
   const techniques: AttackTechnique[] = [];
   if (blackmailHard || impersonationActive) techniques.push({ code: "T1656", name: "Impersonation" });
   if (moneyHard || credentialHard) techniques.push({ code: "T1566", name: "Phishing" });
-  if (malwareHard) techniques.push({ code: "T1486", name: "Data Encrypted for Impact" });
+  if (malwareHard) techniques.push({ code: "T1204.002", name: "Malicious File" });
   let floor = 0;
   if (forced) {
     const weight = blackmail * 4 + money * 3 + (strongCredential + pairedCredential) * 3 + pressure * 2 + (amount || card ? 5 : 0) + (malwareHard ? 4 : 0);
     floor = Math.min(98, 84 + Math.min(14, weight));
   }
-  return { floor, forced, intents, spans, labels, techniques, pressure };
+  return { floor, forced, intents, spans, labels, techniques, pressure, impersonationActive, malwareHard };
 }
 
 function buildHighlights(text: string, markers: Marker[], extra: { start: number; end: number }[] = []): TextPart[] {
@@ -1087,7 +1206,8 @@ function termHits(text: string, origins: number[], term: string): { start: numbe
     const after = text[index + term.length];
     const word = text.slice(index, wordEnd(text, index));
     const prefix = term.length >= 4 || term === "pul" || term === "tez";
-    const allowed = !isLetter(before) && (prefix || !isLetter(after)) && !(term === "hesab" && word.startsWith("hesabat")) && !(term === "invest" && !investWord(word));
+    const sender = term === "gonder" && (word.startsWith("gonderici") || word.startsWith("gonderen"));
+    const allowed = !isLetter(before) && (prefix || !isLetter(after)) && !(term === "hesab" && word.startsWith("hesabat")) && !(term === "invest" && !investWord(word)) && !sender;
     if (allowed) {
       const originStart = origins[index];
       const originEnd = origins[index + term.length - 1];
@@ -1197,6 +1317,160 @@ function assessIntent(raw: string, hasUrl: boolean) {
   };
 }
 
+function plain(value: string): string {
+  return normalizeText(value).replace(/['’`]/g, "");
+}
+
+function splitSentences(text: string): string[] {
+  const parts = text
+    .split(/\n+|(?<=[.!?])\s+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [text.trim()].filter(Boolean);
+}
+
+const WARNING_PHRASES = [
+  "paylasmayin",
+  "vermeyin",
+  "gondermeyin",
+  "teleb etmir",
+  "teleb etmeyecek",
+  "teleb etmez",
+  "teleb olunmur",
+  "daxil olmayin",
+  "acmayin",
+  "yoxlayin",
+  "bildirin",
+  "qoruyun",
+  "do not share",
+  "dont share",
+  "never ask",
+  "never share",
+  "do not open",
+  "do not click",
+  "do not run",
+  "dont open",
+  "dont click",
+  "never open",
+  "ise salmayin",
+  "не передавайте",
+  "не сообщайте",
+  "не открывайте",
+  "не переходите",
+  "не вводите",
+];
+
+function hasWarning(sentence: string): boolean {
+  const folded = plain(sentence);
+  const raw = sentence.toLowerCase();
+  return WARNING_PHRASES.some((phrase) => folded.includes(phrase) || raw.includes(phrase));
+}
+
+function hasPositiveDemand(folded: string): boolean {
+  const run = /\brun\b/.test(folded) && !/\b(?:do not|dont|never) run\b/.test(folded);
+  return run || /teqdim edin|gonderin|daxil edin|tesdiqleyin|ise salin|yenileyin|enter your|send your|send the|confirm your|verify your/.test(folded);
+}
+
+function hasSecret(folded: string): boolean {
+  return /parol|sifre|password|otp|\bfin\b|\bpin\b|парол|login/.test(folded);
+}
+
+function hasPressureText(folded: string): boolean {
+  return /blok|baglan|derhal|tecili|urgent|immediately|asap|eks halda|suspend|hebs|cerime|deadline|немедленно|срочно|заблок/.test(folded);
+}
+
+function hasAmountText(text: string): boolean {
+  return /\d[\d\s.,]{0,12}(?:azn|usd|eur|rub|manat|dollar|tl)\b/.test(plain(text)) || /[$€]\s?\d/.test(text);
+}
+
+function isDefenseText(folded: string): boolean {
+  return /sondur|dayandir|disable|turn off|switch off|deaktiv edin/.test(folded) && /antivirus|defender|mudafie|protection/.test(folded);
+}
+
+function hasExecDemand(folded: string): boolean {
+  const extension = /\.(?:exe|scr|bat|vbs)\b/.test(folded);
+  const run = /ise salin|icra edin/.test(folded) || (/\brun\b/.test(folded) && !/\b(?:do not|dont|never) run\b/.test(folded));
+  return extension && run;
+}
+
+function isThreatSentence(sentence: string): boolean {
+  const folded = plain(sentence);
+  if (isDefenseText(folded) || hasExecDemand(folded)) return true;
+  if (hasWarning(sentence) && !hasPositiveDemand(folded)) return false;
+  if (hasPositiveDemand(folded) && hasSecret(folded)) return true;
+  if (hasAmountText(sentence) && /kocur|wire|odenis|havale|transfer|invoice|faktura|перевод/.test(folded)) return true;
+  if (hasPositiveDemand(folded) && hasPressureText(folded)) return true;
+  return false;
+}
+
+interface Discourse {
+  awarenessOnly: boolean;
+  fileAdvisory: boolean;
+  defense: boolean;
+  execution: boolean;
+  credentialDemand: boolean;
+  financial: boolean;
+  card: boolean;
+  oauth: boolean;
+  pressure: boolean;
+  official: boolean;
+}
+
+function assessDiscourse(text: string, markers: Marker[]): Discourse {
+  const roles = splitSentences(text).map((sentence) => (isThreatSentence(sentence) ? "threat" : hasWarning(sentence) ? "awareness" : "neutral"));
+  const awarenessOnly = roles.some((role) => role === "awareness") && roles.every((role) => role !== "threat");
+  const folded = plain(text);
+  const decoded = plain(deobfuscate(text).text);
+  const fileAdvisory = awarenessOnly && /\bpdf\b|\bzip\b|\.pdf\b|\.zip\b/.test(folded);
+  const defense = !awarenessOnly && isDefenseText(folded);
+  const execution =
+    !awarenessOnly &&
+    (hasExecDemand(folded) ||
+      (defense && /\.(?:exe|scr|bat|vbs)\b/.test(folded)) ||
+      (/\.(?:exe|scr|bat|vbs)\b/.test(folded) && /yukleyin|download|fayli ac|open the/.test(folded)));
+  const credentialDemand =
+    !awarenessOnly && (markers.some((marker) => marker.label === "OTP kod tələbi") || (hasSecret(folded) && hasPositiveDemand(folded)));
+  const financial =
+    !awarenessOnly &&
+    (markers.some((marker) => marker.label === "məbləğ və valyuta" || marker.label === "IBAN") ||
+      hasAmountText(text) ||
+      /iban|yeni hesab|hesab nomre|hesabimiz deyis|hesab deyis|\bkocur|wire|\bodenis|havale|invoice|faktura|перевод|\btransfer\b/.test(folded) ||
+      (/\bpul\b|bitcoin|crypto|qazanc|\bmoney\b/.test(decoded) && /gonder|\bkocur|\bwire\b|\btransfer\b|odenis|havale|\bsend\b/.test(decoded)));
+  const card =
+    !awarenessOnly &&
+    (markers.some((marker) => marker.label === "bank kartı nömrəsi") ||
+      /\bcvv\b/.test(folded) ||
+      /kart nom/.test(folded) ||
+      (/baglama|catdirilma|kuryer|delivery/.test(folded) && /odenis|rusum|komissiya/.test(folded) && hasPositiveDemand(folded)));
+  const oauth =
+    !awarenessOnly &&
+    !defense &&
+    !execution &&
+    !credentialDemand &&
+    /icaze|oauth|permission|grant access/.test(folded) &&
+    /epoct|e-poct|email|kontakt|contact|fayl|inbox|calendar|oxuma/.test(folded);
+  return {
+    awarenessOnly,
+    fileAdvisory,
+    defense,
+    execution,
+    credentialDemand,
+    financial,
+    card,
+    oauth,
+    pressure: hasPressureText(folded),
+    official: /hormetli hemkar|xahis olunur|daxili portal/.test(folded),
+  };
+}
+
+function blendScore(urgency: number, domain: number, style: number, theft: number): number {
+  return clamp(Math.round(urgency * 0.36 + domain * 0.3 + style * 0.16 + theft * 0.18));
+}
+
+function withVectorScores(vectors: IntentVector[], scores: Partial<Record<IntentVector["id"], number>>): IntentVector[] {
+  return vectors.map((vector) => ({ ...vector, score: scores[vector.id] ?? 0 }));
+}
+
 export function analyzePhishing(text: string, url: string, threshold = 65): PhishingReport {
   const hits = findHits(text);
   const signals = uniqueSignals(hits);
@@ -1217,7 +1491,13 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   const domainReports = urls.map((item) => analyzeDomain(item));
   const domain = domainReports.reduce(
     (best, item) => (item.score > best.score ? item : best),
-    domainReports[0] ?? { score: 0, reasons: ["Keçid daxil edilməyib, domen riski sıfır qəbul edildi."], analyzedUrl: "" },
+    domainReports[0] ?? {
+      score: 0,
+      reasons: ["Keçid daxil edilməyib, domen riski sıfır qəbul edildi."],
+      analyzedUrl: "",
+      executable: false,
+      documentation: false,
+    },
   );
 
   let overall = urgency * 0.36 + domain.score * 0.3 + style * 0.16 + theft * 0.18;
@@ -1232,8 +1512,6 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   const normalized = normalizeText(text);
   const wall = assessCyberWall(normalized, markers);
   const lure = assessLures(normalized);
-  if (domain.score >= 40) intent.intents.push("Saxta domen və ya şübhəli keçid aşkarlandı");
-  const intents = [...new Set([...wall.intents, ...intent.intents, ...lure.intents])];
   if (intent.floor > 0 || wall.floor > 0 || lure.floor > 0) overall = clamp(Math.max(overall, intent.floor, wall.floor, lure.floor));
   if (intent.floor >= 84 || wall.forced || lure.floor >= 84) {
     urgency = clamp(Math.max(urgency, 64));
@@ -1244,64 +1522,166 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
   const urlsPresent = urls.some((item) => item.trim().length > 0);
   const semantic = assessIntent(text, urlsPresent);
   overall = clamp(Math.max(overall, semantic.overall));
-  if (domain.reasons.some((reason) => reason.includes(".exe"))) overall = clamp(Math.max(overall, 72));
   urgency = clamp(Math.max(urgency, semantic.vectors.find((vector) => vector.id === "V2")?.score ?? 0));
   theft = clamp(Math.max(theft, semantic.vectors.find((vector) => vector.id === "V1")?.score ?? 0, semantic.vectors.find((vector) => vector.id === "V3")?.score ?? 0));
   if (semantic.synergy) style = clamp(Math.max(style, 36));
 
+  const discourse = assessDiscourse(text, markers);
+  const maliciousFile = !discourse.awarenessOnly && (discourse.execution || domain.executable);
+  let domainScore = domain.score;
+  let vectors = semantic.vectors;
+  let reasoning = [...semantic.reasoning];
+  let payloadCarrier = semantic.payloadCarrier;
+  let override = "";
+
+  if (discourse.awarenessOnly && discourse.fileAdvisory) {
+    urgency = 22;
+    theft = 16;
+    style = 30;
+    domainScore = Math.min(domain.documentation ? 0 : domainScore, 8);
+    overall = blendScore(urgency, domainScore, style, theft);
+    payloadCarrier = false;
+    vectors = withVectorScores(vectors, { V2: urgency, V1: 8 });
+    reasoning = [
+      "Addım 1: Cümlə xəbərdarlıq kontekstindədir — Təhlükəsizlik Maarifləndirməsi.",
+      "Addım 2: PDF və ya ZIP sözü və «göndəricini yoxlayın» icra tələbi deyil. Oğurluq və tələskənlik balları artırılmadı.",
+      "Addım 3: Yekun risk 15-25% dəhlizində saxlanıldı. .exe, .scr, .bat və .vbs icrası bu profildən yüksəkdir.",
+    ];
+  } else if (discourse.awarenessOnly) {
+    urgency = 12;
+    theft = 8;
+    style = 12;
+    domainScore = domain.documentation ? 0 : Math.min(domainScore, 8);
+    overall = blendScore(urgency, domainScore, style, theft);
+    payloadCarrier = false;
+    vectors = withVectorScores(vectors, { V2: urgency, V1: 6 });
+    reasoning = [
+      "Addım 1: Cümlə inkar və qadağa kontekstindədir — Təhlükəsizlik Maarifləndirməsi (Security Awareness).",
+      "Addım 2: parol, OTP, keçid, fayl və ya kart sözü paylaşmayın, tələb etməyəcək, daxil olmayın və ya açmayın feilinin yanındadır. Məlumat oğurluğu və tələskənlik balları artırılmadı.",
+      "Addım 3: Eyni sözlər təqdim edin, göndərin, daxil edin və ya təsdiqləyin tələbi ilə, üstəlik bloklanma təzyiqi ilə gələrsə, risk 90%-dən yuxarı qalxır.",
+    ];
+  } else if (discourse.defense) {
+    urgency = clamp(Math.max(urgency, 90));
+    theft = clamp(Math.max(theft, 86));
+    style = clamp(Math.max(style, 60));
+    domainScore = clamp(Math.max(domainScore, 24));
+    overall = Math.min(99, Math.max(overall, 98));
+    override = "antivirusun söndürülməsi və ya müdafiənin müvəqqəti dayandırılması";
+    vectors = withVectorScores(vectors, { V1: Math.max(vectors.find((vector) => vector.id === "V1")?.score ?? 0, 36), V2: 92, V3: 24 });
+  } else if (maliciousFile) {
+    urgency = clamp(Math.max(urgency, 88));
+    theft = clamp(Math.max(theft, 80));
+    style = clamp(Math.max(style, 52));
+    domainScore = clamp(Math.max(domainScore, 28));
+    overall = Math.min(97, Math.max(overall, 96));
+    override = "icra olunan əlavə (.exe, .scr, .bat və ya .vbs) və işə salın / run tələbi";
+    vectors = withVectorScores(vectors, { V1: Math.max(vectors.find((vector) => vector.id === "V1")?.score ?? 0, 28), V2: 88, V3: 20 });
+  } else if (discourse.oauth && !discourse.financial && !discourse.card) {
+    urgency = 36;
+    theft = 40;
+    style = 22;
+    domainScore = Math.min(domainScore, 20);
+    overall = 52;
+    payloadCarrier = false;
+    override = "OAuth icazə sui-istifadəsi — əlavə yoxlama tələb olunur";
+    vectors = withVectorScores(vectors, { V2: 24, V3: 40 });
+    reasoning = [
+      "Addım 1: Tətbiq e-poçt, kontakt və ya fayllara oxuma icazəsi istəyir.",
+      "Addım 2: Niyyət sinfi OAuth Consent Abuse-dir. Bu, maliyyə köçürməsi və ya parol oğurluğu deyil.",
+      "Addım 3: Əlavə yoxlama tələb olunur. Risk 45-60% dəhlizində saxlanıldı.",
+    ];
+  } else if ((discourse.credentialDemand || discourse.card) && discourse.pressure && overall < 92) {
+    overall = 92;
+    override = "müsbət tələb (təqdim edin, göndərin, daxil edin, təsdiqləyin) və bloklanma təzyiqi";
+  } else if (discourse.financial && discourse.pressure && overall < 90) {
+    overall = 90;
+    override = "maliyyə köçürməsi və ya hesab dəyişikliyi tələbi ilə tələskənlik";
+  }
+
+  const classes: string[] = [];
+  if (!discourse.awarenessOnly && discourse.financial) classes.push("Financial / Invoice Fraud");
+  if (!discourse.awarenessOnly && discourse.credentialDemand) classes.push("Credential / OTP Theft");
+  if (!discourse.awarenessOnly && discourse.card) classes.push("Card Data Theft");
+  if (!discourse.awarenessOnly && (discourse.defense || maliciousFile)) classes.push("Malicious Execution & Defense Evasion");
+  if (discourse.oauth && !discourse.financial && !discourse.card && !discourse.credentialDemand) classes.push("OAuth Consent Abuse");
+  if (classes.length === 0 && (discourse.awarenessOnly || (discourse.official && overall < 20))) classes.push("Security Awareness / Safe Notice");
+
+  const narrative = discourse.awarenessOnly
+    ? []
+    : wall.intents.filter((item) => !item.startsWith("Maliyyə / Kart") && !item.startsWith("Məlumat və OTP"));
+  const reportIntents = [...new Set([...classes, ...narrative])];
+  if (classes.length > 0) reasoning.push(`Niyyət sinfi: ${classes.join("; ")}.`);
+
+  const weighted = blendScore(urgency, domainScore, style, theft);
+  reasoning.push(`Çəkili cəm: tələskənlik ${urgency}×0.36 + saxta domen ${domainScore}×0.30 + üslub ${style}×0.16 + məlumat oğurluğu ${theft}×0.18 = ${weighted}%.`);
+  if (!override && overall > weighted + 1) {
+    if (wall.forced) override = "Kiber Divar: pul, şəxsiyyət və ya şantaj tələbi kritik həddi keçir";
+    else if (semantic.synergy) override = "niyyət vektorlarının sinerjisi (V1/V3 + V2×1.5)";
+    else if (payloadCarrier) override = "zərərli payload daşıyıcısı";
+    else override = "aktiv heuristik hədd";
+  }
+  if (overall > weighted + 1) {
+    reasoning.push(`Kritik qayda (override): ${override}. Yekun risk ${overall}% çəkili cəmdən (${weighted}%) yüksəkdir, səbəbi bu qaydadır.`);
+  } else {
+    reasoning.push(`Yekun risk ${overall}% çəkili cəmlə uzlaşır.`);
+  }
+
   const line = Math.min(85, Math.max(50, Math.round(Number.isFinite(threshold) ? threshold : 65)));
-  const critical = wall.forced || intent.floor >= 84 || lure.floor >= 84 || semantic.payloadCarrier || semantic.synergy || overall >= 84;
-  const quarantine = wall.forced || intent.floor >= 84 || lure.floor >= 84 || semantic.payloadCarrier || semantic.synergy || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
-  const techniques = [...wall.techniques];
-  for (const technique of semantic.techniques) {
-    const existing = techniques.find((item) => item.code === technique.code);
-    if (!existing) techniques.push(technique);
-    else if (!existing.name.includes(technique.name)) existing.name = `${existing.name} · ${technique.name}`;
+  const critical = overall >= 84;
+  const quarantine = overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
+  const techniques: AttackTechnique[] = [];
+  const addTechnique = (code: string, name: string) => {
+    if (!techniques.some((item) => item.code === code)) techniques.push({ code, name });
+  };
+  if (!discourse.awarenessOnly) {
+    const linked = urlsPresent && domain.score >= 40 && !domain.documentation;
+    if (linked && (discourse.financial || discourse.credentialDemand || discourse.card || discourse.pressure || overall >= 70)) {
+      addTechnique("T1566.002", "Spearphishing Link");
+    }
+    if (maliciousFile || (discourse.defense && /\.(?:exe|scr|bat|vbs)\b/i.test(text)) || domain.executable) {
+      addTechnique("T1566.001", "Spearphishing Attachment");
+      addTechnique("T1204.002", "Malicious File");
+    }
+    if (discourse.defense) addTechnique("T1562.001", "Impair Defenses");
+    if (wall.impersonationActive && overall >= 70) addTechnique("T1656", "Impersonation");
+    if (discourse.oauth && !discourse.financial && !discourse.credentialDemand) addTechnique("T1528", "Steal Application Access Token");
+    if (/ransom|sifrelen|bitlocker|decrypt|fidye|fidya/.test(plain(text))) addTechnique("T1486", "Data Encrypted for Impact");
   }
-  if (domain.reasons.some((reason) => reason.includes(".exe")) && !techniques.some((item) => item.code === "T1486")) {
-    techniques.push({ code: "T1486", name: "Data Encrypted for Impact" });
-  }
-  for (const technique of lure.techniques) {
-    if (!techniques.some((item) => item.code === technique.code)) techniques.push(technique);
-  }
-  if (domain.score >= 40 && !techniques.some((item) => item.code === "T1566")) {
-    techniques.push({ code: "T1566", name: "Phishing" });
-  }
-  if (quarantine === "alindi" && techniques.length === 0) {
-    techniques.push({ code: "T1566", name: "Phishing" });
-  }
+
   const pressureWords = signals.map((signal) => `«${signal.label}»`);
-  const findings = [
-    ...semantic.reasoning,
-    ...intents,
-    ...(semantic.payloadCarrier ? ["Zərərli Payload Daşıyıcısı: maliyyə və ya şantaj niyyəti 60%-i keçir, keçid təmiz domen olsa belə məktub 85%+ risk alır."] : []),
-    ...(wall.forced || intent.floor >= 84 ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
-    ...(pressureWords.length > 0 ? [`Təzyiq və ya oğurluq sözləri: ${pressureWords.join(", ")}`] : []),
-    ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
-    ...domain.reasons,
-    ...extras.reasons,
-  ];
-  if (findings.length === 0) {
-    findings.push("Mətndə fişinq əlaməti tapılmadı. Üslub rəsmi daxili yazışmaya uyğundur.");
-  }
+  const findings = discourse.awarenessOnly
+    ? [...reasoning, ...classes, ...domain.reasons]
+    : [
+        ...reasoning,
+        ...reportIntents,
+        ...(payloadCarrier ? ["Zərərli Payload Daşıyıcısı: maliyyə və ya şantaj niyyəti 60%-i keçir, keçid təmiz domen olsa belə məktub 85%+ risk alır."] : []),
+        ...(wall.forced && !discourse.oauth ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
+        ...(pressureWords.length > 0 ? [`Təzyiq və ya oğurluq sözləri: ${pressureWords.join(", ")}`] : []),
+        ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
+        ...domain.reasons,
+        ...extras.reasons,
+      ];
+  if (findings.length === 0) findings.push("Mətndə fişinq əlaməti tapılmadı. Üslub rəsmi daxili yazışmaya uyğundur.");
 
   return {
     overall,
     urgency,
-    domain: domain.score,
+    domain: domainScore,
     style,
     theft,
     quarantine,
-    highlights: buildHighlights(text, markers, [...wall.spans, ...lure.spans, ...semantic.spans]),
-    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels, ...semantic.labels])],
+    highlights: discourse.awarenessOnly ? [{ text, hit: false }] : buildHighlights(text, markers, [...wall.spans, ...lure.spans, ...semantic.spans]),
+    matchedTerms: discourse.awarenessOnly
+      ? []
+      : [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels, ...semantic.labels])],
     findings,
     analyzedUrl: domain.analyzedUrl,
-    intents,
+    intents: reportIntents,
     techniques,
     critical,
-    vectors: semantic.vectors,
-    reasoning: semantic.reasoning,
-    payloadCarrier: semantic.payloadCarrier,
+    vectors,
+    reasoning,
+    payloadCarrier,
     obfuscated: semantic.obfuscated,
   };
 }

@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link2, ShieldBan } from "lucide-react";
 import { phishingTemplates } from "../data/mockData.ts";
 import { analyzePhishing, type PhishingReport } from "../lib/phishingEngine.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { DefenseInsight } from "./DefenseInsight.tsx";
-import { Meter, Panel } from "./ui.tsx";
+import { Meter, Panel, ScanSweep } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
 
 const QUARANTINE = {
@@ -23,12 +23,18 @@ const QUARANTINE = {
 } as const;
 
 export function PhishingAnalyzer() {
-  const { registerPhishingBlock } = useSoc();
+  const { registerPhishingBlock, quarantineThreshold } = useSoc();
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [report, setReport] = useState<PhishingReport | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [loggedKey, setLoggedKey] = useState("");
+  const [scanToken, setScanToken] = useState(0);
+  const textRef = useRef(text);
+  const urlRef = useRef(url);
+  const hasReport = useRef(false);
+  textRef.current = text;
+  urlRef.current = url;
 
   const dirty = report !== null && snapshot !== `${text}||${url}`;
   const quarantine = report ? QUARANTINE[report.quarantine] : null;
@@ -36,12 +42,19 @@ export function PhishingAnalyzer() {
 
   function run(nextText = text, nextUrl = url) {
     if (!nextText.trim() && !nextUrl.trim()) return;
-    const next = analyzePhishing(nextText, nextUrl);
+    const next = analyzePhishing(nextText, nextUrl, quarantineThreshold);
+    hasReport.current = true;
+    setScanToken((token) => token + 1);
     setText(nextText);
     setUrl(nextUrl);
     setReport(next);
     setSnapshot(`${nextText}||${nextUrl}`);
   }
+
+  useEffect(() => {
+    if (!hasReport.current) return;
+    setReport(analyzePhishing(textRef.current, urlRef.current, quarantineThreshold));
+  }, [quarantineThreshold]);
 
   const highlighted = useMemo(() => report?.highlights ?? [], [report]);
 
@@ -51,7 +64,7 @@ export function PhishingAnalyzer() {
         <p className="text-xs font-bold tracking-[0.18em] text-cyan-300">1-Cİ MÜDAFİƏ XƏTTİ</p>
         <h2 className="mt-1 text-xl font-bold text-white">Fişinq və sosial mühəndislik analizatoru</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
-          Mətn və keçid yerli alqoritmlə yoxlanılır. Azərbaycan, ingilis, rus və türk dillərindəki tələskənlik sözləri, saxta domenlər, kart və IBAN izləri qırmızı ilə işarələnir.
+          Kiber Divar mətni həm orijinal, həm də diakritiksiz formada yoxlayır. Şantaj, maliyyə, şifrə, zərərli fayl, qurum təqlidi və tələskənlik izləri qırmızı ilə işarələnir.
         </p>
       </div>
 
@@ -111,7 +124,8 @@ export function PhishingAnalyzer() {
           </div>
         </Panel>
 
-        <Panel>
+        <Panel className="scan-host">
+          {report ? <ScanSweep token={scanToken} /> : null}
           {!report || !quarantine ? (
             <div className="grid h-full min-h-[280px] place-items-center text-center">
               <div>
@@ -122,7 +136,9 @@ export function PhishingAnalyzer() {
           ) : (
             <div className="space-y-4">
               <div className={cn("rounded-2xl border px-4 py-3", quarantine.className)}>
-                <div className="text-[11px] font-bold tracking-[0.16em]">AVTOMATİK KARANTİNƏ AL</div>
+                <div className="text-[11px] font-bold tracking-[0.16em]">
+                  {report.critical && report.quarantine === "alindi" ? "KRİTİK TƏHLÜKƏ — AVTOMATİK KARANTİNƏ AL" : "AVTOMATİK KARANTİNƏ AL"}
+                </div>
                 <div className="mt-1 flex items-end justify-between gap-3">
                   <div className="font-mono text-4xl font-semibold">{report.overall}%</div>
                   <div className="text-right text-sm font-bold">{quarantine.status}</div>
@@ -136,23 +152,22 @@ export function PhishingAnalyzer() {
               <Meter label="Məlumat oğurluğu ehtimalı" value={report.theft} intent="risk" />
               <DefenseInsight
                 techniques={
-                  report.quarantine === "tehlukesiz"
-                    ? [{ code: "—", name: "Uyğun hücum texnikası yoxdur" }]
-                    : [
-                        { code: "T1566.002", name: "Spearphishing Link" },
-                        ...(report.theft >= 28 ? [{ code: "T1056", name: "Input Capture" }] : []),
-                      ]
+                  report.techniques.length > 0
+                    ? report.techniques
+                    : [{ code: "—", name: "Uyğun hücum texnikası yoxdur" }]
                 }
                 steps={[
                   ...(report.intents.length > 0 ? report.intents : ["Semantik niyyət tapılmadı. Mətn rəsmi və ya neytral görünür."]),
                   `Təcililik balı ${report.urgency} ümumi riskə 36% çəki ilə daxil olur.`,
                   `Domen balı ${report.domain} 30% çəki daşıyır.`,
                   `Üslub balı ${report.style} 16%, oğurluq balı ${report.theft} 18% çəki daşıyır.`,
-                  report.quarantine === "alindi"
-                    ? `Cəm ${report.overall}% karantin həddi olan 70-i keçir, ona görə mesaj təcrid olunur.`
-                    : report.quarantine === "nezaret"
-                      ? `Cəm ${report.overall}% nəzarət zolağındadır (40–69).`
-                      : `Cəm ${report.overall}% təhlükəsiz həddin altındadır.`,
+                  report.critical && report.quarantine === "alindi"
+                    ? `Cəm ${report.overall}% kritik niyyət həddindədir. Kiber Divar karantin səviyyəsindən (${quarantineThreshold}%) asılı olmayaraq mesajı avtomatik təcrid edir.`
+                    : report.quarantine === "alindi"
+                      ? `Cəm ${report.overall}% karantin həddi olan ${quarantineThreshold}-i keçir, ona görə mesaj təcrid olunur.`
+                      : report.quarantine === "nezaret"
+                        ? `Cəm ${report.overall}% nəzarət zolağındadır və ${quarantineThreshold}% karantin həddinə çatmır.`
+                        : `Cəm ${report.overall}% təhlükəsiz həddin altındadır.`,
                 ]}
               />
               <button

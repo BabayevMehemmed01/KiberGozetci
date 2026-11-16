@@ -11,7 +11,7 @@ import { SignalCanvas } from "./SignalCanvas.tsx";
 import { SpectrogramCanvas } from "./SpectrogramCanvas.tsx";
 import { VisionPanel } from "./VisionPanel.tsx";
 import { DefenseInsight } from "./DefenseInsight.tsx";
-import { Meter, Panel } from "./ui.tsx";
+import { Meter, Panel, ScanSweep } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
 
 export function DeepfakeDetector() {
@@ -24,6 +24,7 @@ export function DeepfakeDetector() {
   const [samples, setSamples] = useState<Float32Array | null>(null);
   const [sampleRate, setSampleRate] = useState(48000);
   const [report, setReport] = useState<AcousticReport | null>(null);
+  const [scanToken, setScanToken] = useState(0);
   const [video, setVideo] = useState<VideoForensics | null>(null);
   const [still, setStill] = useState<StillForensics | null>(null);
   const [mediaKind, setMediaKind] = useState<"idle" | "audio" | "image" | "video">("idle");
@@ -128,6 +129,7 @@ export function DeepfakeDetector() {
       setSampleRate(decoded.sampleRate);
       setBuffer(decoded.buffer);
       setReport(nextReport);
+      setScanToken((token) => token + 1);
       setVideo(lip);
       setStill(frame);
       setLabel(nextLabel);
@@ -182,6 +184,7 @@ export function DeepfakeDetector() {
       rememberPreview(result.url);
       setMediaKind("image");
       setStill(result.forensics);
+      setScanToken((token) => token + 1);
       setLabel(file.name);
     } catch {
       setError("Şəkil kadrı oxunmadı. JPG, PNG və ya WEBP seçin.");
@@ -385,7 +388,8 @@ export function DeepfakeDetector() {
           </div>
         </Panel>
 
-        <Panel>
+        <Panel className="scan-host">
+          {report || still ? <ScanSweep token={scanToken} /> : null}
           {!report && still ? (
             <div className="space-y-4">
               <div className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-3 text-cyan-50">

@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RASHAD_ID, employees as seedEmployees, threatJournal } from "../data/mockData.ts";
-import { randomAttackIp } from "../lib/scenario.ts";
+import { randomAttackIp, type SimulationOutcome } from "../lib/scenario.ts";
 import { unlockAudio } from "../lib/tones.ts";
 import { formatClock, fullName } from "../lib/utils.ts";
 import type { AppTab, Employee, FeedEvent, SimPhase, ToastMessage } from "../types.ts";
+
+export type SocTheme = "cyber" | "emerald" | "violet" | "daylight";
 
 interface SocContextValue {
   employees: Employee[];
@@ -27,7 +29,12 @@ interface SocContextValue {
   closeKillChain: () => void;
   replayKillChain: () => void;
   updatePhase: (phase: SimPhase) => void;
-  applySimulationLock: () => void;
+  applySimulationLock: (outcome: SimulationOutcome) => void;
+  theme: SocTheme;
+  setTheme: (theme: SocTheme) => void;
+  quarantineThreshold: number;
+  setQuarantineThreshold: (value: number) => void;
+  lastOutcome: SimulationOutcome | null;
   sendAwarenessTest: (id: string) => void;
   toggleFreeze: (id: string) => void;
   applyTraining: (id: string, correct: number) => void;
@@ -36,6 +43,28 @@ interface SocContextValue {
 }
 
 const SocContext = createContext<SocContextValue | null>(null);
+
+function loadTheme(): SocTheme {
+  try {
+    const value = localStorage.getItem("kibergozetci-theme");
+    if (value === "emerald" || value === "violet" || value === "daylight" || value === "cyber") return value;
+  } catch {
+    return "cyber";
+  }
+  return "cyber";
+}
+
+function loadThreshold(): number {
+  try {
+    const stored = localStorage.getItem("kibergozetci-threshold");
+    if (!stored) return 65;
+    const value = Number(stored);
+    if (!Number.isFinite(value)) return 65;
+    return Math.min(85, Math.max(50, Math.round(value)));
+  } catch {
+    return 65;
+  }
+}
 
 function stampJournal(events: FeedEvent[]): FeedEvent[] {
   const now = Date.now();
@@ -82,6 +111,9 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const [targetEmployeeId, setTargetEmployeeIdState] = useState(RASHAD_ID);
   const [lockedEmployeeId, setLockedEmployeeId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [theme, setThemeState] = useState<SocTheme>(loadTheme);
+  const [quarantineThreshold, setThresholdState] = useState(loadThreshold);
+  const [lastOutcome, setLastOutcome] = useState<SimulationOutcome | null>(null);
   const employeesRef = useRef(employees);
   const phaseRef = useRef<SimPhase>("idle");
   const snapshotRef = useRef<Employee | null>(null);
@@ -101,6 +133,22 @@ export function SocProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback((id: string) => {
     setToasts((current) => current.filter((item) => item.id !== id));
   }, []);
+
+  const setTheme = useCallback((next: SocTheme) => {
+    setThemeState(next);
+    localStorage.setItem("kibergozetci-theme", next);
+  }, []);
+
+  const setQuarantineThreshold = useCallback((value: number) => {
+    const next = Math.min(85, Math.max(50, Math.round(value)));
+    setThresholdState(next);
+    localStorage.setItem("kibergozetci-threshold", String(next));
+  }, []);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme === "daylight" ? "light" : "dark";
+  }, [theme]);
 
   const updatePhase = useCallback((phase: SimPhase) => {
     phaseRef.current = phase;
@@ -145,6 +193,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
       setEmployees((current) => current.map((employee) => (employee.id === snapshot.id ? { ...snapshot } : employee)));
     }
     setSimulationLocked(false);
+    setLastOutcome(null);
     setLockedEmployeeId(null);
     lockedIdRef.current = null;
     setFeed((current) => current.filter((event) => event.source !== "simulation"));
@@ -174,12 +223,13 @@ export function SocProvider({ children }: { children: ReactNode }) {
     setTargetEmployeeIdState(id);
   }, []);
 
-  const applySimulationLock = useCallback(() => {
+  const applySimulationLock = useCallback((outcome: SimulationOutcome) => {
     if (lockAppliedRef.current) return;
     const targetId = targetRef.current;
     const current = employeesRef.current.find((employee) => employee.id === targetId);
     if (!current) return;
     lockAppliedRef.current = true;
+    setLastOutcome(outcome);
     if (!snapshotRef.current) snapshotRef.current = { ...current };
     lockedIdRef.current = targetId;
     setLockedEmployeeId(targetId);
@@ -202,8 +252,8 @@ export function SocProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(),
       time: formatClock(new Date()),
       title: `Hesab donduruldu: ${name}`,
-      detail: "Vahid risk balı 99/100. İxrac dayandırıldı, sessiya bağlandı.",
-      technical: `${name} sessiyası üç müdafiə qatının birləşməsindən sonra donduruldu. Aktiv əlaqə kəsildi.`,
+      detail: `Vahid risk balı ${outcome.risk}/100. Bloklama ${outcome.blockSeconds.toFixed(1)} s. Qarşısı alınan zərər ₼ ${outcome.damage.toLocaleString("az-AZ")}. İxrac dayandırıldı, sessiya bağlandı.`,
+      technical: `${name} sessiyası üç müdafiə qatının birləşməsindən sonra donduruldu. ${outcome.title}. Aktiv əlaqə kəsildi.`,
       sourceIp: "zəncirvari ssenari",
       mitre: "T1078 — Valid Accounts",
       severity: "critical",
@@ -212,7 +262,7 @@ export function SocProvider({ children }: { children: ReactNode }) {
     });
     pushToast({
       title: "Avtomatik bloklama",
-      message: `${name} hesabı donduruldu. Dondurulmuş hesab sayı yeniləndi.`,
+      message: `${name} hesabı donduruldu. Risk ${outcome.risk}/100, reaksiya ${outcome.blockSeconds.toFixed(1)} s.`,
       tone: "critical",
     });
   }, [pushFeed, pushToast]);
@@ -381,6 +431,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
       replayKillChain,
       updatePhase,
       applySimulationLock,
+      theme,
+      setTheme,
+      quarantineThreshold,
+      setQuarantineThreshold,
+      lastOutcome,
       sendAwarenessTest,
       toggleFreeze,
       applyTraining,
@@ -409,6 +464,11 @@ export function SocProvider({ children }: { children: ReactNode }) {
       replayKillChain,
       updatePhase,
       applySimulationLock,
+      theme,
+      setTheme,
+      quarantineThreshold,
+      setQuarantineThreshold,
+      lastOutcome,
       sendAwarenessTest,
       toggleFreeze,
       applyTraining,

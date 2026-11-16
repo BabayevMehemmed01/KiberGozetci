@@ -4,6 +4,11 @@ import type { AccountStatus, ToastMessage } from "../types.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { clamp, cn } from "../lib/utils.ts";
 
+export function ScanSweep({ token }: { token: number }) {
+  if (token <= 0) return null;
+  return <span key={token} className="scan-laser" aria-hidden />;
+}
+
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <section className={cn("rounded-2xl border border-[#1E293B] bg-[#0F172A]/95 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)] md:p-5", className)}>

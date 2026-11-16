@@ -45,9 +45,10 @@ function buildStages(employee: Employee, scenario: AttackScenario) {
       title: "Zəncirvari əlaqələndirmə və avtomatik bloklama",
       risk: scenario.risks[3],
       mitre: "T1078 — Valid Accounts",
-      detail: `KiberGözətçi üç qatı birləşdirir. Vahid risk balı ${scenario.risks[3]}/100 (KRİTİK). ${name} hesabı saniyələr içində dondurulur və məlumat sızması dayandırılır.`,
+      detail: `KiberGözətçi üç qatı birləşdirir. Vahid risk balı ${scenario.risks[3]}/100 (KRİTİK). Bloklama ${scenario.blockSeconds.toFixed(1)} saniyədə tamamlandı. Qarşısı alınan zərər ₼ ${scenario.damage.toLocaleString("az-AZ")}. ${name} hesabı dondurulur və məlumat sızması dayandırılır.`,
       logs: [
         `Üç qat birləşdirildi. Vahid risk balı: ${scenario.risks[3]}/100 (KRİTİK).`,
+        `Bloklama sürəti ${scenario.blockSeconds.toFixed(1)} s. Qarşısı alınan zərər ₼ ${scenario.damage.toLocaleString("az-AZ")}.`,
         `${name} hesabı donduruldu. İxrac dayandı. İdarəetmə panelindəki say yeniləndi.`,
       ],
     },
@@ -85,7 +86,7 @@ function downloadIncident(employee: Employee, stages: ReturnType<typeof buildSta
   <h1>KiberGözətçi — kiber-insident hesabatı</h1>
   <p>Hədəf: ${escapeHtml(name)} · ${escapeHtml(employee.position)} · ${escapeHtml(employee.department)}</p>
   <p>Hesab: ${escapeHtml(employee.email)} · Hücum IP: ${escapeHtml(scenario.ip)} · Gecə vaxtı: ${escapeHtml(scenario.clock)} · Sızdırılan fayl: ${scenario.files.toLocaleString("az-AZ")}</p>
-  <p>Tələ: ${escapeHtml(scenario.title)} · Vahid risk: ${scenario.risks[3]}/100 (KRİTİK)</p>
+  <p>Tələ: ${escapeHtml(scenario.title)} · Vahid risk: ${scenario.risks[3]}/100 (KRİTİK) · Reaksiya: ${scenario.blockSeconds.toFixed(1)} s · Qarşısı alınan zərər: ₼ ${scenario.damage.toLocaleString("az-AZ")}</p>
   <p>Tədbir: hesab donduruldu, ixrac dayandırıldı, sessiya bağlandı.</p>
   <table>
     <thead><tr><th>Vaxt</th><th>Mərhələ</th><th>MITRE ATT&CK</th><th>Risk</th><th>Təfərrüat</th></tr></thead>
@@ -118,6 +119,8 @@ export function KillChainModal() {
     rolledRef.current = { token: killToken, scenario: rollScenario(target.department) };
   }
   const scenario = rolledRef.current.scenario;
+  const scenarioRef = useRef(scenario);
+  scenarioRef.current = scenario;
   const stages = useMemo(() => buildStages(target, scenario), [target, scenario]);
   const [elapsed, setElapsed] = useState(0);
   const [stage, setStage] = useState(-1);
@@ -161,7 +164,13 @@ export function KillChainModal() {
         playStageCue(next, soundRef.current);
         if (next === 3 && !locked) {
           locked = true;
-          applyRef.current();
+          const current = scenarioRef.current;
+          applyRef.current({
+            risk: current.risks[3],
+            blockSeconds: current.blockSeconds,
+            damage: current.damage,
+            title: current.title,
+          });
         }
       }
       if (time >= 10000) {
@@ -206,7 +215,7 @@ export function KillChainModal() {
                   <p className="text-[11px] font-bold tracking-[0.18em] text-red-300">CANLI HÜCUM ZƏNCİRİ</p>
                   <h2 id="kill-title" className="mt-1 text-2xl font-extrabold text-white">Zəncirvari hücum simulyasiyası</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    {scenario.title} · {scenario.ip} · {scenario.clock} · {scenario.files.toLocaleString("az-AZ")} fayl
+                    {scenario.title} · {scenario.ip} · {scenario.clock} · {scenario.files.toLocaleString("az-AZ")} fayl · yekun {scenario.risks[3]}/100 · {scenario.blockSeconds.toFixed(1)} s · ₼ {scenario.damage.toLocaleString("az-AZ")}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -254,9 +263,9 @@ export function KillChainModal() {
                   <div className="flex items-end justify-between">
                     <div>
                       <div className="text-[11px] text-slate-500">VAHİD RİSK BALI</div>
-                      <div className={cn("font-mono text-4xl font-semibold", current.risk >= 99 ? "text-red-300" : "text-amber-200")}>{current.risk}/100</div>
+                      <div className={cn("font-mono text-4xl font-semibold", active >= 3 ? "text-red-300" : "text-amber-200")}>{current.risk}/100</div>
                     </div>
-                    <div className="text-sm font-extrabold text-red-300">{current.risk >= 99 ? "KRİTİK" : "YÜKSƏLİR"}</div>
+                    <div className="text-sm font-extrabold text-red-300">{active >= 3 ? "KRİTİK" : "YÜKSƏLİR"}</div>
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#060B14]">
                     <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-red-500" style={{ width: `${progress}%` }} />

@@ -26,7 +26,7 @@ const MODELS = [
 const SHIELDS = ["Poçt şlüzü", "Səs və CV qapısı", "Hesab dondurma", "Domen reputasiyası"];
 
 export function Dashboard() {
-  const { phishingBlocked, deepfakeCaught, frozenCount, averageScore, feed, setTab, simulationLocked, employees, lockedEmployeeId } = useSoc();
+  const { phishingBlocked, deepfakeCaught, frozenCount, averageScore, feed, setTab, simulationLocked, employees, lockedEmployeeId, lastOutcome } = useSoc();
   const lockedEmployee = employees.find((employee) => employee.id === lockedEmployeeId);
   const [trendSeed] = useState(() => Math.random());
   const trend = useMemo(() => buildAttackTrend(new Date(), trendSeed), [trendSeed]);
@@ -38,9 +38,11 @@ export function Dashboard() {
         <p className="mt-1 text-sm text-slate-400">İnsan faktoru, dipfeyk və daxili təhdidlər bir əməliyyat mərkəzində izlənir.</p>
       </div>
 
-      {simulationLocked ? (
+      {simulationLocked && lastOutcome ? (
         <div className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-          Son müdaxilə: {lockedEmployee ? fullName(lockedEmployee) : "Seçilmiş əməkdaş"} hesabı avtomatik donduruldu. Vahid risk balı <span className="font-bold">99/100 (KRİTİK)</span>. Məlumat sızması dayandırıldı.
+          Son müdaxilə: {lockedEmployee ? fullName(lockedEmployee) : "Seçilmiş əməkdaş"} hesabı avtomatik donduruldu. Vahid risk balı{" "}
+          <span className="font-bold">{lastOutcome.risk}/100 (KRİTİK)</span>. Reaksiya {lastOutcome.blockSeconds.toFixed(1)} s · qarşısı alınan zərər ₼{" "}
+          {lastOutcome.damage.toLocaleString("az-AZ")}.
         </div>
       ) : null}
 
@@ -170,6 +172,42 @@ export function Dashboard() {
   );
 }
 
+function useCountUp(value: string): string {
+  const match = value.match(/\d+/);
+  const target = match ? Number(match[0].replace(/\s/g, "")) : null;
+  const prefix = match && match.index !== undefined ? value.slice(0, match.index) : "";
+  const suffix = match && match.index !== undefined ? value.slice(match.index + match[0].length) : "";
+  const [shown, setShown] = useState(0);
+  const fromRef = useRef(0);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (target === null) return;
+    const from = started.current ? fromRef.current : 0;
+    started.current = true;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      fromRef.current = target;
+      setShown(target);
+      return;
+    }
+    const start = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / 800);
+      const eased = 1 - (1 - progress) ** 3;
+      setShown(Math.round(from + (target - from) * eased));
+      if (progress < 1) frame = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  if (target === null) return value;
+  return `${prefix}${shown}${suffix}`;
+}
+
 function KpiCard({
   label,
   value,
@@ -193,6 +231,7 @@ function KpiCard({
     return () => window.clearTimeout(timeout);
   }, [value]);
 
+  const shown = useCountUp(value);
   const Icon = icon === "mail" ? Mail : icon === "audio" ? AudioLines : icon === "lock" ? Lock : Gauge;
   const accent = tone === "good" ? "text-emerald-300" : tone === "warn" ? "text-amber-300" : "text-red-300";
 
@@ -207,7 +246,7 @@ function KpiCard({
         <span className="text-xs font-medium text-slate-400">{label}</span>
         <Icon className={cn("h-4 w-4", accent)} />
       </div>
-      <div className="font-mono text-3xl font-semibold tracking-tight text-white">{value}</div>
+      <div className="font-mono text-3xl font-semibold tracking-tight text-white">{shown}</div>
       <p className={cn("mt-2 text-xs font-semibold", accent)}>{note}</p>
     </article>
   );

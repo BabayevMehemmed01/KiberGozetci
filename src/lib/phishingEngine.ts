@@ -5,6 +5,11 @@ export interface TextPart {
   hit: boolean;
 }
 
+export interface AttackTechnique {
+  code: string;
+  name: string;
+}
+
 export interface PhishingReport {
   overall: number;
   urgency: number;
@@ -17,6 +22,8 @@ export interface PhishingReport {
   findings: string[];
   analyzedUrl: string;
   intents: string[];
+  techniques: AttackTechnique[];
+  critical: boolean;
 }
 
 interface Signal {
@@ -444,9 +451,8 @@ function intentProfile(signals: Signal[], markers: Marker[]) {
   const intents: string[] = [];
   let floor = 0;
   if (moneyRequest) {
-    floor = 74 + Math.min(14, money * 3 + (amount ? 5 : 0) + pressure * 2);
-    if (pressure >= 1 && money >= 1) floor = Math.max(floor, 80);
-    floor = Math.min(88, Math.max(72, floor));
+    floor = 84 + Math.min(14, money * 3 + (amount ? 5 : 0) + pressure * 2);
+    floor = Math.min(98, Math.max(84, floor));
     intents.push("Maliyyə / Kart Köçürmə Tələbi Niyyəti Aşkarlandı");
   }
   if (pressure >= 1) intents.push("Tələskənlik, təzyiq və aqressiya niyyəti aşkarlandı");
@@ -485,10 +491,235 @@ function styleExtras(text: string, folded: string, urgency: number): { score: nu
   return { score: clamp(score), reasons };
 }
 
-function buildHighlights(text: string, markers: Marker[]): TextPart[] {
+type WallKind = "blackmail" | "money" | "credential" | "malware" | "impersonation" | "pressure";
+type WallRole = "strong" | "media" | "channel" | "paired" | "weak" | "normal";
+
+interface WallRoot {
+  root: string;
+  kind: WallKind;
+  role: WallRole;
+  prefix: boolean;
+}
+
+interface WallHit {
+  kind: WallKind;
+  role: WallRole;
+  start: number;
+  end: number;
+  root: string;
+}
+
+function wallRoot(root: string, kind: WallKind, role: WallRole, prefix = root.length >= 4): WallRoot {
+  return { root, kind, role, prefix };
+}
+
+const SHORT_PREFIX = new Set(["pin", "kod", "otp", "pay", "pul", "tez", "код"]);
+
+const WALL_ROOTS: WallRoot[] = [
+  wallRoot("hec kime deme", "pressure", "normal"),
+  wallRoot("enable content", "malware", "strong"),
+  wallRoot("fayli ac", "malware", "strong"),
+  wallRoot("senedi yukle", "malware", "strong"),
+  wallRoot("it support", "impersonation", "normal"),
+  wallRoot("paylasacam", "blackmail", "strong"),
+  wallRoot("yayacam", "blackmail", "strong"),
+  wallRoot("blackmail", "blackmail", "strong"),
+  wallRoot("compromise", "blackmail", "strong"),
+  wallRoot("instagram", "blackmail", "channel"),
+  wallRoot("telegram", "blackmail", "channel"),
+  wallRoot("whatsapp", "blackmail", "channel"),
+  wallRoot("immediately", "pressure", "normal"),
+  wallRoot("shantaj", "blackmail", "strong"),
+  wallRoot("santaj", "blackmail", "strong"),
+  wallRoot("webcam", "blackmail", "strong"),
+  wallRoot("expose", "blackmail", "strong"),
+  wallRoot("goruntu", "blackmail", "media"),
+  wallRoot("ifsaa", "blackmail", "strong"),
+  wallRoot("biabir", "blackmail", "strong"),
+  wallRoot("invoice", "money", "normal"),
+  wallRoot("faktura", "money", "normal"),
+  wallRoot("attachment", "malware", "weak"),
+  wallRoot("download", "malware", "weak"),
+  wallRoot("direktor", "impersonation", "normal"),
+  wallRoot("password", "credential", "strong"),
+  wallRoot("suspend", "credential", "paired"),
+  wallRoot("serefsiz", "pressure", "normal"),
+  wallRoot("mehkeme", "impersonation", "normal"),
+  wallRoot("whatsapp", "blackmail", "channel"),
+  wallRoot("tiktok", "blackmail", "channel"),
+  wallRoot("account", "money", "normal"),
+  wallRoot("transfer", "money", "normal"),
+  wallRoot("odenis", "money", "normal"),
+  wallRoot("rehber", "impersonation", "normal"),
+  wallRoot("verify", "credential", "paired"),
+  wallRoot("login", "credential", "paired"),
+  wallRoot("reset", "credential", "paired"),
+  wallRoot("urgent", "pressure", "normal"),
+  wallRoot("please", "pressure", "normal"),
+  wallRoot("gonder", "money", "normal"),
+  wallRoot("dollar", "money", "normal"),
+  wallRoot("manat", "money", "normal"),
+  wallRoot("money", "money", "normal"),
+  wallRoot("nude", "blackmail", "strong"),
+  wallRoot("photo", "blackmail", "media"),
+  wallRoot("sekil", "blackmail", "media"),
+  wallRoot("share", "blackmail", "channel"),
+  wallRoot("leak", "blackmail", "strong"),
+  wallRoot("ifsa", "blackmail", "strong"),
+  wallRoot("video", "blackmail", "media"),
+  wallRoot("macro", "malware", "strong"),
+  wallRoot("quick", "pressure", "normal"),
+  wallRoot("gizli", "pressure", "normal"),
+  wallRoot("derhal", "pressure", "normal"),
+  wallRoot("tecili", "pressure", "normal"),
+  wallRoot("cerime", "pressure", "normal"),
+  wallRoot("hebs", "pressure", "normal"),
+  wallRoot("vergi", "impersonation", "normal"),
+  wallRoot("polis", "impersonation", "normal"),
+  wallRoot("admin", "impersonation", "normal"),
+  wallRoot("kocur", "money", "normal"),
+  wallRoot("hesab", "money", "normal"),
+  wallRoot("kart", "money", "normal"),
+  wallRoot("bank", "money", "normal"),
+  wallRoot("send", "money", "normal"),
+  wallRoot("cash", "money", "normal"),
+  wallRoot("wire", "money", "normal"),
+  wallRoot("para", "money", "normal"),
+  wallRoot("iban", "money", "normal"),
+  wallRoot("sifre", "credential", "strong"),
+  wallRoot("parol", "credential", "strong"),
+  wallRoot("blok", "credential", "paired"),
+  wallRoot("asap", "pressure", "normal"),
+  wallRoot("now", "pressure", "normal", false),
+  wallRoot("pls", "pressure", "normal", false),
+  wallRoot("tez", "pressure", "normal", true),
+  wallRoot("pul", "money", "normal", true),
+  wallRoot("pay", "money", "normal", true),
+  wallRoot("kod", "credential", "strong", true),
+  wallRoot("otp", "credential", "strong", true),
+  wallRoot("pin", "credential", "strong", true),
+  wallRoot("cvv", "credential", "strong", false),
+  wallRoot("azn", "money", "normal", false),
+  wallRoot("usd", "money", "normal", false),
+  wallRoot("ceo", "impersonation", "normal", false),
+  wallRoot("hr", "impersonation", "normal", false),
+  wallRoot("шантаж", "blackmail", "strong"),
+  wallRoot("разошлю", "blackmail", "strong"),
+  wallRoot("видео", "blackmail", "media"),
+  wallRoot("слив", "blackmail", "strong"),
+  wallRoot("деньги", "money", "normal"),
+  wallRoot("перевод", "money", "normal"),
+  wallRoot("карт", "money", "normal"),
+  wallRoot("счет", "money", "normal"),
+  wallRoot("счёт", "money", "normal"),
+  wallRoot("пароль", "credential", "strong"),
+  wallRoot("срочно", "pressure", "normal"),
+  wallRoot("acil", "pressure", "normal"),
+  wallRoot("hemen", "pressure", "normal"),
+  wallRoot("код", "credential", "strong", true),
+].map((item) => (SHORT_PREFIX.has(item.root) ? { ...item, prefix: true } : item));
+
+function overlaps(taken: { start: number; end: number }[], start: number, end: number): boolean {
+  return taken.some((span) => start < span.end && end > span.start);
+}
+
+function scanRoots(text: string, roots: WallRoot[]): WallHit[] {
+  const ordered = [...roots].sort((left, right) => right.root.length - left.root.length);
+  const taken: { start: number; end: number }[] = [];
+  const hits: WallHit[] = [];
+  for (const item of ordered) {
+    let from = 0;
+    while (from < text.length) {
+      const index = text.indexOf(item.root, from);
+      if (index < 0) break;
+      const before = text[index - 1];
+      const after = text[index + item.root.length];
+      const word = text.slice(index, wordEnd(text, index));
+      const end = item.prefix && isLetter(after) ? wordEnd(text, index) : index + item.root.length;
+      const allowed = !isLetter(before) && (item.prefix || !isLetter(after)) && !(item.root === "hesab" && word.startsWith("hesabat"));
+      if (allowed && !overlaps(taken, index, end)) {
+        taken.push({ start: index, end });
+        hits.push({ kind: item.kind, role: item.role, start: index, end, root: item.root });
+      }
+      from = index + Math.max(1, item.root.length);
+    }
+  }
+  return hits;
+}
+
+function scanExtensions(text: string): WallHit[] {
+  const hits: WallHit[] = [];
+  for (const match of text.matchAll(/\.(?:exe|zip|rar|scr|apk|bat)(?!\p{L})/giu)) {
+    if (match.index === undefined) continue;
+    hits.push({
+      kind: "malware",
+      role: "strong",
+      start: match.index,
+      end: match.index + match[0].length,
+      root: match[0].toLowerCase(),
+    });
+  }
+  return hits;
+}
+
+function assessCyberWall(text: string, markers: Marker[]) {
+  const hits = [...scanExtensions(text), ...scanRoots(text, WALL_ROOTS)];
+  const count = (kind: WallKind, role?: WallRole) => hits.filter((hit) => hit.kind === kind && (role === undefined || hit.role === role)).length;
+  const amount = markers.some((marker) => marker.label === "məbləğ və valyuta");
+  const card = markers.some((marker) => marker.label === "bank kartı nömrəsi" || marker.label === "IBAN");
+  const otpMarker = markers.some((marker) => marker.label === "OTP kod tələbi");
+  const blackmail = count("blackmail");
+  const money = count("money");
+  const pressure = count("pressure");
+  const impersonation = count("impersonation");
+  const strongBlackmail = count("blackmail", "strong");
+  const media = count("blackmail", "media");
+  const channel = count("blackmail", "channel");
+  const strongCredential = count("credential", "strong");
+  const pairedCredential = count("credential", "paired");
+  const malwareStrong = count("malware", "strong");
+  const malwareWeak = count("malware", "weak");
+  const blackmailHard = strongBlackmail > 0 || (media > 0 && channel > 0);
+  const moneyHard = card || money >= 2 || (money >= 1 && (amount || pressure >= 1)) || (amount && pressure >= 1);
+  const credentialHard = strongCredential > 0 || otpMarker || (pairedCredential > 0 && (pressure >= 1 || pairedCredential >= 2));
+  const malwareHard = malwareStrong > 0 || (malwareWeak >= 2) || (malwareWeak > 0 && (pressure >= 1 || moneyHard || credentialHard || blackmailHard));
+  const forced = blackmailHard || moneyHard || credentialHard || malwareHard;
+  const impersonationActive = impersonation >= 2 || (impersonation >= 1 && (forced || pressure >= 1));
+  const showPressure = pressure >= 1 && (forced || impersonationActive || pressure >= 2);
+  const intents: string[] = [];
+  if (blackmailHard) intents.push("Şantaj, hədə və məxfilik pozuntusu niyyəti aşkarlandı");
+  if (moneyHard) intents.push("Maliyyə / Kart Köçürmə Tələbi Niyyəti Aşkarlandı");
+  if (credentialHard) intents.push("Məlumat və OTP oğurluğu niyyəti aşkarlandı");
+  if (malwareHard) intents.push("Zərərli fayl və texniki tələ niyyəti aşkarlandı");
+  if (impersonationActive) intents.push("Rəhbər və ya qurum təqlidi niyyəti aşkarlandı");
+  if (showPressure) intents.push("Tələskənlik, təzyiq və aqressiya niyyəti aşkarlandı");
+  const visible = new Set<WallKind>();
+  if (blackmailHard) visible.add("blackmail");
+  if (moneyHard || forced) visible.add("money");
+  if (credentialHard || forced) visible.add("credential");
+  if (malwareHard) visible.add("malware");
+  if (impersonationActive) visible.add("impersonation");
+  if (showPressure || forced) visible.add("pressure");
+  if (!forced && !impersonationActive) visible.clear();
+  const spans = hits.filter((hit) => visible.has(hit.kind)).map((hit) => ({ start: hit.start, end: hit.end }));
+  const labels = hits.filter((hit) => visible.has(hit.kind)).map((hit) => hit.root);
+  const techniques: AttackTechnique[] = [];
+  if (blackmailHard || impersonationActive) techniques.push({ code: "T1656", name: "Impersonation" });
+  if (moneyHard || credentialHard) techniques.push({ code: "T1566", name: "Phishing" });
+  if (malwareHard) techniques.push({ code: "T1486", name: "Data Encrypted for Impact" });
+  let floor = 0;
+  if (forced) {
+    const weight = blackmail * 4 + money * 3 + (strongCredential + pairedCredential) * 3 + pressure * 2 + (amount || card ? 5 : 0) + (malwareHard ? 4 : 0);
+    floor = Math.min(98, 84 + Math.min(14, weight));
+  }
+  return { floor, forced, intents, spans, labels, techniques, pressure };
+}
+
+function buildHighlights(text: string, markers: Marker[], extra: { start: number; end: number }[] = []): TextPart[] {
   const spans = [
     ...findHits(text).map((hit) => ({ start: hit.start, end: hit.end })),
     ...markers.map((marker) => ({ start: marker.start, end: marker.end })),
+    ...extra,
   ].sort((left, right) => left.start - right.start || right.end - left.end);
   const merged: { start: number; end: number }[] = [];
   for (const span of spans) {
@@ -508,7 +739,7 @@ function buildHighlights(text: string, markers: Marker[]): TextPart[] {
   return parts;
 }
 
-export function analyzePhishing(text: string, url: string): PhishingReport {
+export function analyzePhishing(text: string, url: string, threshold = 65): PhishingReport {
   const hits = findHits(text);
   const signals = uniqueSignals(hits);
   const markers = findMarkers(text);
@@ -540,17 +771,29 @@ export function analyzePhishing(text: string, url: string): PhishingReport {
   overall = clamp(Math.round(overall));
 
   const intent = intentProfile(signals, markers);
+  const wall = assessCyberWall(normalizeText(text), markers);
   if (domain.score >= 40) intent.intents.push("Saxta domen və ya şübhəli keçid aşkarlandı");
-  if (intent.floor > 0) overall = clamp(Math.max(overall, intent.floor));
-  if (intent.floor >= 72) {
+  const intents = [...new Set([...wall.intents, ...intent.intents])];
+  if (intent.floor > 0 || wall.floor > 0) overall = clamp(Math.max(overall, intent.floor, wall.floor));
+  if (intent.floor >= 84 || wall.forced) {
     urgency = clamp(Math.max(urgency, 64));
     theft = clamp(Math.max(theft, 58));
-    if (intent.pressure >= 1) style = clamp(Math.max(style, 36));
+    if (intent.pressure >= 1 || wall.pressure >= 1) style = clamp(Math.max(style, 36));
   }
 
-  const quarantine = overall >= 70 ? "alindi" : overall >= 40 ? "nezaret" : "tehlukesiz";
+  const line = Math.min(85, Math.max(50, Math.round(Number.isFinite(threshold) ? threshold : 65)));
+  const critical = wall.forced || intent.floor >= 84 || overall >= 84;
+  const quarantine = wall.forced || intent.floor >= 84 || overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
+  const techniques = [...wall.techniques];
+  if (domain.score >= 40 && !techniques.some((item) => item.code === "T1566")) {
+    techniques.push({ code: "T1566", name: "Phishing" });
+  }
+  if (quarantine === "alindi" && techniques.length === 0) {
+    techniques.push({ code: "T1566", name: "Phishing" });
+  }
   const findings = [
-    ...intent.intents,
+    ...intents,
+    ...(wall.forced || intent.floor >= 84 ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
     ...signals.map((signal) => `Təzyiq və ya oğurluq sözü: «${signal.label}».`),
     ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
     ...domain.reasons,
@@ -567,10 +810,12 @@ export function analyzePhishing(text: string, url: string): PhishingReport {
     style,
     theft,
     quarantine,
-    highlights: buildHighlights(text, markers),
-    matchedTerms: [...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label)],
+    highlights: buildHighlights(text, markers, wall.spans),
+    matchedTerms: [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels])],
     findings,
     analyzedUrl: domain.analyzedUrl,
-    intents: intent.intents,
+    intents,
+    techniques,
+    critical,
   };
 }

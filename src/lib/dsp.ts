@@ -46,8 +46,8 @@ export function verdictFor(report: Pick<AcousticReport, "probability" | "unrelia
   label: string;
   tone: "critical" | "warning" | "safe" | "muted";
 } {
-  if (report.unreliable) return { label: "KİFAYƏT QƏDƏR SİQNAL YOXDUR", tone: "muted" };
-  if (report.probability >= 75) return { label: "SÜNI SİNTEZ AŞKARLANDI", tone: "critical" };
+  if (report.unreliable) return { label: "Kifayət qədər siqnal yoxdur", tone: "muted" };
+  if (report.probability >= 75) return { label: "KRİTİK DİPFEYK / SÜNİ SƏS", tone: "critical" };
   if (report.probability >= 40) return { label: "ŞÜBHƏLİ SƏS İZİ", tone: "warning" };
   return { label: "HƏQİQİ İNSAN SƏSİ", tone: "safe" };
 }

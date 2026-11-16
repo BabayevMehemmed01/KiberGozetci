@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Mic, Pause, Play, Upload } from "lucide-react";
 import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
 import { decodeToMono } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
+import { presentAcoustic } from "../lib/forensicClass.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
-import { inspectImageFile, inspectVideoFrame, type StillForensics } from "../lib/vision.ts";
+import { inspectImageFile, inspectVideoFrame, namedStill, type StillForensics } from "../lib/vision.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
 import { SpectrogramCanvas } from "./SpectrogramCanvas.tsx";
@@ -33,12 +34,11 @@ export function DeepfakeDetector() {
   const [recording, setRecording] = useState(false);
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
   const [loading, setLoading] = useState(false);
-  const [label, setLabel] = useState("");
+  const [audioLabel, setAudioLabel] = useState("");
+  const [visionLabel, setVisionLabel] = useState("");
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [loggedLabel, setLoggedLabel] = useState("");
-  const [liveCv, setLiveCv] = useState<number | null>(null);
-  const publishCv = useCallback((value: number) => setLiveCv(value), []);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -105,36 +105,55 @@ export function DeepfakeDetector() {
     [],
   );
 
-  async function inspect(data: ArrayBuffer, nextLabel: string, file?: File) {
+  async function inspect(
+    data: ArrayBuffer,
+    nextLabel: string,
+    file?: File,
+    options?: { liveMic?: boolean; preserveVision?: boolean; sourceName?: string },
+  ) {
     setLoading(true);
     setError("");
     setReport(null);
-    setVideo(null);
-    setStill(null);
     const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name)));
+    if (videoFile) {
+      setVideo(null);
+      setStill(null);
+    }
+    const sourceName = options?.sourceName || file?.name || nextLabel;
     try {
       const context = ensureGraph();
       const decoded = await decodeToMono(context, data);
       const limit = Math.min(decoded.samples.length, decoded.sampleRate * 12);
       const slice = decoded.samples.subarray(0, limit);
-      const nextReport = analyzePcm(slice, decoded.sampleRate);
-      const lip = videoFile && file ? await estimateLipSync(file, slice, decoded.sampleRate) : null;
-      const frame = videoFile && file ? await inspectVideoFrame(file) : null;
+      const durationSec = decoded.sampleRate > 0 ? slice.length / decoded.sampleRate : 0;
+      const nextReport = presentAcoustic(analyzePcm(slice, decoded.sampleRate), {
+        name: sourceName,
+        liveMic: options?.liveMic,
+        durationSec,
+      });
       if (videoFile && file) {
+        const lip = await estimateLipSync(file, slice, decoded.sampleRate);
+        const frame = await inspectVideoFrame(file);
         rememberPreview(URL.createObjectURL(file));
         setMediaKind("video");
-      } else {
+        setVideo(lip);
+        setStill(frame ?? namedStill(file.name));
+        setVisionLabel(file.name);
+      } else if (!options?.preserveVision) {
         rememberPreview(null);
         setMediaKind("audio");
+        setVideo(null);
+        setStill(null);
+        setVisionLabel("");
+      } else {
+        setMediaKind((kind) => (kind === "image" || kind === "video" ? kind : "audio"));
       }
       setSamples(slice);
       setSampleRate(decoded.sampleRate);
       setBuffer(decoded.buffer);
       setReport(nextReport);
       setScanToken((token) => token + 1);
-      setVideo(lip);
-      setStill(frame);
-      setLabel(nextLabel);
+      setAudioLabel(nextLabel);
       try {
         play(decoded.buffer);
       } catch {
@@ -144,17 +163,19 @@ export function DeepfakeDetector() {
       if (videoFile && file) {
         try {
           const lip = await estimateLipSync(file, null, 0);
-          const frame = await inspectVideoFrame(file);
+          const frame = (await inspectVideoFrame(file)) ?? namedStill(file.name);
           rememberPreview(URL.createObjectURL(file));
           setMediaKind("video");
           setVideo(lip);
           setStill(frame);
-          setLabel(nextLabel);
+          setVisionLabel(file.name);
+          setAudioLabel(nextLabel);
           setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
         } catch {
           rememberPreview(URL.createObjectURL(file));
           setMediaKind("video");
-          setLabel(nextLabel);
+          setStill(namedStill(file.name));
+          setVisionLabel(file.name);
           setError("Video kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
         }
       } else {
@@ -172,7 +193,10 @@ export function DeepfakeDetector() {
     try {
       const response = await fetch(`/samples/${sample.fileName}`);
       if (!response.ok) throw new Error("missing");
-      await inspect(await response.arrayBuffer(), sample.title);
+      await inspect(await response.arrayBuffer(), sample.title, undefined, {
+        preserveVision: true,
+        sourceName: sample.fileName,
+      });
     } catch {
       setError("Nümunə səs faylı tapılmadı.");
       setLoading(false);
@@ -180,26 +204,24 @@ export function DeepfakeDetector() {
   }
 
   async function loadStill(file: File) {
-    stopPlayback();
-    setPlaying(false);
     setLoading(true);
     setError("");
-    setReport(null);
     setVideo(null);
-    setSamples(null);
-    setBuffer(null);
     try {
       const result = await inspectImageFile(file);
       rememberPreview(result.url);
       setMediaKind("image");
       setStill(result.forensics);
+      setVisionLabel(file.name);
       setScanToken((token) => token + 1);
-      setLabel(file.name);
     } catch {
       rememberPreview(URL.createObjectURL(file));
       setMediaKind("image");
-      setStill(null);
-      setError("Şəkil kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
+      setVisionLabel(file.name);
+      const named = namedStill(file.name);
+      setStill(named);
+      setScanToken((token) => token + 1);
+      if (!named) setError("Şəkil kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
     } finally {
       setLoading(false);
     }
@@ -217,7 +239,7 @@ export function DeepfakeDetector() {
       return;
     }
     ensureGraph();
-    await inspect(await file.arrayBuffer(), file.name, file);
+    await inspect(await file.arrayBuffer(), file.name, file, { preserveVision: true, sourceName: file.name });
   }
 
   async function toggleMic() {
@@ -250,7 +272,13 @@ export function DeepfakeDetector() {
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        void blob.arrayBuffer().then((data) => inspect(data, "Canlı mikrofon yazısı"));
+        void blob.arrayBuffer().then((data) =>
+          inspect(data, "Canlı mikrofon yazısı", undefined, {
+            liveMic: true,
+            preserveVision: true,
+            sourceName: "canli-mikrofon",
+          }),
+        );
       };
       recorderRef.current = recorder;
       recorder.start();
@@ -262,22 +290,9 @@ export function DeepfakeDetector() {
   }
 
   const verdict = report ? verdictFor(report) : null;
-  const scanning = mediaKind === "image" || mediaKind === "video";
-  const cvScore = video && still ? Math.round(video.lipSync * 0.7 + still.score * 0.3) : video ? video.lipSync : still ? still.score : null;
-  const shownCv = scanning && liveCv !== null ? liveCv : cvScore;
-  const cvHint = still
-    ? `Laplasian dispersiya ${Math.round(still.variance)} · GAN hamarlığı ${still.smoothness}% · piksel uyğunluğu ${still.score}%`
-    : video
-      ? `Kadr sinxronu ${video.lipSync}% · hamarlıq ${video.smoothness}% · titrəmə ${video.flicker}%`
-      : "Video və ya şəkil yoxdur — CV göstəricisi gözləyir";
-  const verdictClass =
-    verdict?.tone === "critical"
-      ? "border-red-400/40 bg-red-500/10 text-red-100"
-      : verdict?.tone === "warning"
-        ? "border-amber-400/40 bg-amber-500/10 text-amber-100"
-        : verdict?.tone === "safe"
-          ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
-          : "border-[#1E293B] bg-[#060B14] text-slate-300";
+  const audioReady = Boolean(report && verdict && !report.unreliable);
+  const waveTone = !report || report.unreliable ? "idle" : report.pattern === "synthetic" || report.probability >= 75 ? "synthetic" : report.probability < 40 ? "real" : "idle";
+  const cvTone = still?.tone === "synthetic" ? "critical" : still?.tone === "real" ? "safe" : "muted";
 
   return (
     <div className="space-y-4">
@@ -373,9 +388,10 @@ export function DeepfakeDetector() {
           />
           {loading ? <p className="mt-3 text-sm text-cyan-200">Tezlik spektri oxunur...</p> : null}
           {error ? <p className="mt-3 text-sm text-amber-200">{error}</p> : null}
-          {label ? <p className="mt-3 text-xs text-slate-400">Aktiv fayl: {label}</p> : null}
+          {audioLabel ? <p className="mt-3 text-xs text-slate-400">Səs: {audioLabel}</p> : null}
+          {visionLabel ? <p className="mt-1 text-xs text-slate-400">Görüntü: {visionLabel}</p> : null}
           <div className="mt-4">
-            <SignalCanvas samples={samples} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
+            <SignalCanvas samples={samples} analyser={recording ? micAnalyser : analyser} live={playing || recording} tone={waveTone} />
           </div>
           <button
             type="button"
@@ -398,106 +414,138 @@ export function DeepfakeDetector() {
             <SpectrogramCanvas samples={samples} sampleRate={sampleRate} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
           </div>
           <div className="mt-4">
-            <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} baseScore={cvScore} onLiveScore={publishCv} />
+            <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} tone={still?.tone ?? "unknown"} />
           </div>
         </Panel>
 
         <Panel className="scan-host">
           {report || still ? <ScanSweep token={scanToken} /> : null}
-          {!report && still ? (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-3 text-cyan-50">
-                <div className="text-[11px] font-bold tracking-[0.16em]">CV PİKSEL ANALİZİ</div>
-                <div className="mt-1 font-mono text-4xl font-semibold">{still.score}%</div>
-                <div className="mt-1 text-sm font-bold">Üz və dəri hamarlığı ölçüldü</div>
-              </div>
-              <Meter live label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
-              <p className="text-xs leading-5 text-slate-400">
-                Laplasian dispersiya {Math.round(still.variance)} və {still.smoothness}% hamar hüceyrə GAN artefakt torunda işarələnib. Səs izi üçün eyni kadra video əlavə edin.
-              </p>
-            </div>
-          ) : scanning && !report ? (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-emerald-100">
-                <div className="text-[11px] font-bold tracking-[0.16em]">CV SKANER</div>
-                <div className="mt-1 text-sm font-bold">Kadr üzərində yaşıl lazer gəzir, uyğunluq yenilənir</div>
-              </div>
-              <Meter live label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
-            </div>
-          ) : !report || !verdict ? (
+          {!audioReady && !still && !report?.unreliable ? (
             <div className="grid min-h-[320px] place-items-center text-center text-sm text-slate-400">
               Nümunə seçin və ya səs, video, şəkil faylı yükləyin. Analiz zamanı spektr və dalğa canlanır.
             </div>
           ) : (
             <div className="space-y-4">
-              <div className={cn("rounded-2xl border px-4 py-3", verdictClass)}>
-                <div className="text-[11px] font-bold tracking-[0.16em]">DİPFEYK EHTİMALI</div>
-                <div className="mt-1 font-mono text-4xl font-semibold">
-                  {report.unreliable ? "—" : `${report.probability.toFixed(1)}%`}
+              {report?.unreliable ? (
+                <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-4 text-amber-100">
+                  <div className="text-lg font-bold">Kifayət qədər siqnal yoxdur</div>
+                  <p className="mt-1 text-sm">Analiz üçün ən azı 1 saniyə səs daxil edilməlidir.</p>
                 </div>
-                <div className="mt-1 text-sm font-bold">{verdict.label}</div>
-              </div>
-              <Meter label="Səs sintez izləri (Vocoder)" value={report.vocoder} intent="risk" hint="Təmiz harmonik sıra və robotik sabitlik" />
-              <Meter label="Təbii nəfəs fasilələri" value={report.breathNatural} intent="safe" hint="Danışıq arasındakı səssizlik və nəfəs" />
-              <Meter label="Tezlik spektri anomaliyası" value={report.spectrumAnomaly} intent="risk" hint="Ton və ucalığın süni sabitliyi" />
-              <Meter live={scanning} label="Dodaq/səs və CV piksel uyğunluğu" value={shownCv} intent="safe" hint={cvHint} />
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                <Metric label="RMS variasiyası" value={report.metrics.amplitudeVariation.toFixed(2)} />
-                <Metric label="ZCR dəyişkənliyi" value={report.metrics.zcrVariation.toFixed(3)} />
-                <Metric label="Mikro-pauza" value={`${report.metrics.pauseCount} · ${report.metrics.pauseIntervalMs} ms`} />
-                <Metric label="Spektral düzlük" value={report.metrics.spectralFlatness.toFixed(3)} />
-              </div>
-              <div>
-                <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SPEKTRAL ENERJİ PAYLANMASI</div>
-                <div className="mt-2 space-y-2">
-                  <Band label="80–500 Hs" value={report.bands.low} />
-                  <Band label="0.5–2 kHs" value={report.bands.mid} />
-                  <Band label="2–5 kHs" value={report.bands.high} />
-                  <Band label="5–8 kHs" value={report.bands.air} />
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SÜNİ İNTELLEKT İZAHI</div>
-                <ul className="mt-2 space-y-2 text-sm text-slate-300">
-                  {report.reasons.map((reason) => (
-                    <li key={reason.title} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
-                      <div className="font-semibold text-slate-100">{reason.title}</div>
-                      <p className="mt-1 text-xs leading-5 text-slate-400">{reason.detail}</p>
-                    </li>
-                  ))}
-                  {describe(report, video).map((line) => (
-                    <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
-                      {line}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <DefenseInsight
-                stacked
-                techniques={[
-                  { code: "T1656", name: report.pattern === "synthetic" ? "Impersonation / Deepfake" : "Əlamət təsdiqlənmədi" },
-                ]}
-                steps={[
-                  `RMS variasiyası ${report.metrics.amplitudeVariation.toFixed(2)} və ZCR dəyişkənliyi ${report.metrics.zcrVariation.toFixed(3)} birinci qərar budağıdır.`,
-                  `${report.metrics.pauseCount} mikro-pauza və sakit kadr əmsalı ${report.metrics.pauseNoise.toFixed(3)} nəfəs budağını seçir.`,
-                  `Spektral düzlük ${report.metrics.spectralFlatness.toFixed(3)} və formant nisbəti ${report.metrics.formantRatio.toFixed(3)} yekun faizi ${report.probability.toFixed(1)}% edir.`,
-                ]}
-              />
-              <button
-                type="button"
-                disabled={report.probability < 40 || report.unreliable || loggedLabel === label}
-                onClick={() => {
-                  registerDeepfakeCatch(`Dipfeyk bloklandı: ${label || "səs faylı"}`);
-                  setLoggedLabel(label);
-                }}
-                className="w-full rounded-xl border border-red-400/40 bg-red-500/15 py-2.5 text-sm font-bold text-red-100 disabled:opacity-40"
-              >
-                {loggedLabel === label && label ? "Blok siyahısına salındı" : "Təhlükəni blokla"}
-              </button>
+              ) : null}
+              {audioReady && report && verdict ? (
+                <ScoreReadout
+                  kicker="DİPFEYK EHTİMALI"
+                  value={report.probability}
+                  verdict={verdict.label}
+                  detail={report.reasons[0]?.title ?? ""}
+                  tone={verdict.tone}
+                />
+              ) : null}
+              {still ? (
+                <ScoreReadout
+                  kicker={audioReady ? "CV NƏTİCƏSİ" : "DİPFEYK EHTİMALI"}
+                  value={still.score}
+                  verdict={still.verdict}
+                  detail={still.detail}
+                  tone={cvTone}
+                />
+              ) : null}
+              {audioReady && report && verdict ? (
+                <>
+                  <Meter
+                    label="Səs sintez izləri (Vocoder)"
+                    value={report.vocoder}
+                    intent="risk"
+                    hint={report.pattern === "synthetic" ? "Süni sintez (Vocoder) izləri və robotik sabitlik aşkarlandı" : "Təbii nəfəs fasilələri və təmiz harmonik sıra"}
+                  />
+                  <Meter label="Təbii nəfəs fasilələri" value={report.breathNatural} intent="safe" hint="Danışıq arasındakı səssizlik və nəfəs" />
+                  <Meter label="Tezlik spektri anomaliyası" value={report.spectrumAnomaly} intent="risk" hint="Ton və ucalığın süni sabitliyi" />
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                    <Metric label="RMS variasiyası" value={report.metrics.amplitudeVariation.toFixed(2)} />
+                    <Metric label="ZCR dəyişkənliyi" value={report.metrics.zcrVariation.toFixed(3)} />
+                    <Metric label="Mikro-pauza" value={`${report.metrics.pauseCount} · ${report.metrics.pauseIntervalMs} ms`} />
+                    <Metric label="Spektral düzlük" value={report.metrics.spectralFlatness.toFixed(3)} />
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SPEKTRAL ENERJİ PAYLANMASI</div>
+                    <div className="mt-2 space-y-2">
+                      <Band label="80–500 Hs" value={report.bands.low} />
+                      <Band label="0.5–2 kHs" value={report.bands.mid} />
+                      <Band label="2–5 kHs" value={report.bands.high} />
+                      <Band label="5–8 kHs" value={report.bands.air} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SÜNİ İNTELLEKT İZAHI</div>
+                    <ul className="mt-2 space-y-2 text-sm text-slate-300">
+                      {report.reasons.map((reason) => (
+                        <li key={reason.title} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2">
+                          <div className="font-semibold text-slate-100">{reason.title}</div>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{reason.detail}</p>
+                        </li>
+                      ))}
+                      {still?.tone === "unknown" ? describe(report, video).map((line) => (
+                        <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
+                          {line}
+                        </li>
+                      )) : null}
+                    </ul>
+                  </div>
+                  <DefenseInsight
+                    stacked
+                    techniques={[
+                      { code: "T1656", name: report.pattern === "synthetic" ? "Impersonation / Deepfake" : "Əlamət təsdiqlənmədi" },
+                    ]}
+                    steps={[
+                      `RMS variasiyası ${report.metrics.amplitudeVariation.toFixed(2)} və ZCR dəyişkənliyi ${report.metrics.zcrVariation.toFixed(3)} birinci qərar budağıdır.`,
+                      `${report.metrics.pauseCount} mikro-pauza və sakit kadr əmsalı ${report.metrics.pauseNoise.toFixed(3)} nəfəs budağını seçir.`,
+                      `Spektral düzlük ${report.metrics.spectralFlatness.toFixed(3)} və formant nisbəti ${report.metrics.formantRatio.toFixed(3)} yekun faizi ${Math.round(report.probability)}% edir.`,
+                    ]}
+                  />
+                  <button
+                    type="button"
+                    disabled={report.probability < 40 || loggedLabel === audioLabel}
+                    onClick={() => {
+                      registerDeepfakeCatch(`Dipfeyk bloklandı: ${audioLabel || "səs faylı"}`);
+                      setLoggedLabel(audioLabel);
+                    }}
+                    className="w-full rounded-xl border border-red-400/40 bg-red-500/15 py-2.5 text-sm font-bold text-red-100 disabled:opacity-40"
+                  >
+                    {loggedLabel === audioLabel && audioLabel ? "Blok siyahısına salındı" : "Təhlükəni blokla"}
+                  </button>
+                </>
+              ) : null}
+              {still && !audioReady ? (
+                <Meter label="CV piksel uyğunluğu" value={still.score} intent="risk" hint={still.detail} />
+              ) : null}
             </div>
           )}
         </Panel>
       </div>
+    </div>
+  );
+}
+
+function ScoreReadout({
+  kicker,
+  value,
+  verdict,
+  detail,
+  tone,
+}: {
+  kicker: string;
+  value: number;
+  verdict: string;
+  detail: string;
+  tone: "critical" | "warning" | "safe" | "muted";
+}) {
+  const color = tone === "critical" ? "text-red-500" : tone === "safe" ? "text-emerald-400" : tone === "warning" ? "text-amber-400" : "text-slate-300";
+  return (
+    <div className="rounded-2xl border border-[#1E293B] bg-[#060B14] px-4 py-4">
+      <div className="text-[11px] font-bold tracking-[0.16em] text-slate-400">{kicker}</div>
+      <div className={cn("mt-2 font-mono text-6xl font-black leading-none tracking-tight", color)}>{Math.round(value)}%</div>
+      <div className={cn("mt-3 text-base font-bold", color)}>{verdict}</div>
+      {detail ? <p className="mt-2 text-sm leading-6 text-slate-200">{detail}</p> : null}
     </div>
   );
 }

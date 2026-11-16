@@ -5,6 +5,7 @@ interface SignalCanvasProps {
   samples: Float32Array | null;
   analyser: AnalyserNode | null;
   live: boolean;
+  tone?: "idle" | "real" | "synthetic";
 }
 
 interface WavePalette {
@@ -17,8 +18,51 @@ interface WavePalette {
   label: string;
 }
 
-function paletteFor(theme: string): WavePalette {
-  if (theme === "daylight") {
+function paletteFor(theme: string, tone: "idle" | "real" | "synthetic"): WavePalette {
+  const daylight = theme === "daylight";
+  if (tone === "synthetic") {
+    return daylight
+      ? {
+          background: "#f8fafc",
+          grid: "#fecaca",
+          wave: "#dc2626",
+          liveWave: "#b91c1c",
+          bar: "#ef4444",
+          hot: "#991b1b",
+          label: "#475569",
+        }
+      : {
+          background: "#060B14",
+          grid: "#3f1d1d",
+          wave: "#ef4444",
+          liveWave: "#f87171",
+          bar: "#dc2626",
+          hot: "#fecaca",
+          label: "#64748B",
+        };
+  }
+  if (tone === "real") {
+    return daylight
+      ? {
+          background: "#f8fafc",
+          grid: "#a7f3d0",
+          wave: "#059669",
+          liveWave: "#0e7490",
+          bar: "#0f766e",
+          hot: "#0e7490",
+          label: "#475569",
+        }
+      : {
+          background: "#060B14",
+          grid: "#134e4a",
+          wave: "#34d399",
+          liveWave: "#22d3ee",
+          bar: "#2dd4bf",
+          hot: "#67e8f9",
+          label: "#64748B",
+        };
+  }
+  if (daylight) {
     return {
       background: "#f8fafc",
       grid: "#cbd5e1",
@@ -40,18 +84,18 @@ function paletteFor(theme: string): WavePalette {
   };
 }
 
-export function SignalCanvas({ samples, analyser, live }: SignalCanvasProps) {
+export function SignalCanvas({ samples, analyser, live, tone = "idle" }: SignalCanvasProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const samplesRef = useRef(samples);
   const analyserRef = useRef(analyser);
   const liveRef = useRef(live);
-  const paletteRef = useRef<WavePalette>(paletteFor("cyber"));
+  const paletteRef = useRef<WavePalette>(paletteFor("cyber", "idle"));
   const [tick, setTick] = useState(0);
   const theme = useDocumentTheme();
   samplesRef.current = samples;
   analyserRef.current = analyser;
   liveRef.current = live;
-  paletteRef.current = paletteFor(theme);
+  paletteRef.current = paletteFor(theme, tone);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -109,7 +153,7 @@ export function SignalCanvas({ samples, analyser, live }: SignalCanvasProps) {
 
     draw();
     return () => cancelAnimationFrame(frame);
-  }, [tick, live, samples, analyser, theme]);
+  }, [tick, live, samples, analyser, theme, tone]);
 
   return <canvas ref={ref} className="h-[230px] w-full rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950" />;
 }

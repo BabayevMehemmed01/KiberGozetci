@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { StillForensics } from "../lib/vision.ts";
-import { clamp } from "../lib/utils.ts";
+import type { ForensicKind } from "../lib/forensicClass.ts";
+import { cn } from "../lib/utils.ts";
 import { useDocumentTheme } from "../lib/useDocumentTheme.ts";
 
 interface HarmonicBands {
@@ -15,31 +16,22 @@ interface VisionPanelProps {
   url: string;
   forensics: StillForensics | null;
   bands: HarmonicBands | null;
-  baseScore?: number | null;
-  onLiveScore?: (value: number) => void;
+  tone?: ForensicKind;
 }
 
-const WOBBLE = [0, 3, -4, 2, -7, 5, -1, 4];
-
-function drawWire(context: CanvasRenderingContext2D, width: number, height: number) {
-  context.strokeStyle = "rgba(52, 211, 153, 0.55)";
-  context.lineWidth = 1;
-  const cells = 8;
-  for (let index = 1; index < cells; index += 1) {
-    const x = (index * width) / cells;
-    const y = (index * height) / cells;
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, height);
-    context.moveTo(0, y);
-    context.lineTo(width, y);
-    context.stroke();
-  }
-}
-
-function drawCover(context: CanvasRenderingContext2D, source: CanvasImageSource, sourceWidth: number, sourceHeight: number, width: number, height: number) {
+function drawContain(
+  context: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  width: number,
+  height: number,
+  daylight: boolean,
+) {
+  context.fillStyle = daylight ? "#e2e8f0" : "#07111f";
+  context.fillRect(0, 0, width, height);
   if (sourceWidth < 2 || sourceHeight < 2) return false;
-  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
   const drawnWidth = sourceWidth * scale;
   const drawnHeight = sourceHeight * scale;
   context.drawImage(source, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
@@ -73,6 +65,20 @@ function drawCells(
   }
 }
 
+function FaceFrame({ color }: { color: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
+      <div className="relative aspect-square h-[68%]">
+        <span className={cn("absolute top-0 left-0 h-6 w-6 border-t-2 border-l-2", color)} />
+        <span className={cn("absolute top-0 right-0 h-6 w-6 border-t-2 border-r-2", color)} />
+        <span className={cn("absolute bottom-0 left-0 h-6 w-6 border-b-2 border-l-2", color)} />
+        <span className={cn("absolute right-0 bottom-0 h-6 w-6 border-r-2 border-b-2", color)} />
+        <span className={cn("absolute inset-[22%] border border-dashed", color)} />
+      </div>
+    </div>
+  );
+}
+
 function drawMatrix(
   context: CanvasRenderingContext2D,
   width: number,
@@ -86,16 +92,14 @@ function drawMatrix(
   drawCells(context, width, height, daylight, grid, bands);
 }
 
-export function VisionPanel({ kind, url, forensics, bands, baseScore = null, onLiveScore }: VisionPanelProps) {
+export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: VisionPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const onLiveRef = useRef(onLiveScore);
   const [tick, setTick] = useState(0);
-  const [readout, setReadout] = useState<number | null>(null);
   const [frameReady, setFrameReady] = useState(false);
   const [frameFailed, setFrameFailed] = useState(false);
+  const [laser, setLaser] = useState(false);
   const theme = useDocumentTheme();
-  onLiveRef.current = onLiveScore;
   const scanning = kind === "image" || kind === "video";
 
   useEffect(() => {
@@ -109,23 +113,17 @@ export function VisionPanel({ kind, url, forensics, bands, baseScore = null, onL
   useEffect(() => {
     setFrameReady(false);
     setFrameFailed(false);
-    setReadout(null);
   }, [kind, url]);
 
   useEffect(() => {
-    if (!scanning) return;
-    const base = baseScore ?? 18;
-    let step = 0;
-    const emit = () => {
-      const next = clamp(Math.round(base + WOBBLE[step % WOBBLE.length]));
-      step += 1;
-      setReadout(next);
-      onLiveRef.current?.(next);
-    };
-    emit();
-    const timer = window.setInterval(emit, 200);
-    return () => window.clearInterval(timer);
-  }, [scanning, baseScore]);
+    if (!scanning || !url) {
+      setLaser(false);
+      return;
+    }
+    setLaser(true);
+    const timer = window.setTimeout(() => setLaser(false), 2600);
+    return () => window.clearTimeout(timer);
+  }, [scanning, url]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -157,12 +155,11 @@ export function VisionPanel({ kind, url, forensics, bands, baseScore = null, onL
       const video = videoRef.current;
       let drew = false;
       if (kind === "video" && video && video.readyState >= 2 && video.videoWidth > 0) {
-        drew = drawCover(context, video, video.videoWidth, video.videoHeight, width, height);
+        drew = drawContain(context, video, video.videoWidth, video.videoHeight, width, height, daylight);
       } else if (kind === "image" && imageReady && image.naturalWidth > 0) {
-        drew = drawCover(context, image, image.naturalWidth, image.naturalHeight, width, height);
+        drew = drawContain(context, image, image.naturalWidth, image.naturalHeight, width, height, daylight);
       }
       if (!drew) drawMatrix(context, width, height, daylight, forensics?.grid ?? null, bands);
-      else drawWire(context, width, height);
       if (kind === "video") frame = requestAnimationFrame(paint);
     };
 
@@ -189,20 +186,27 @@ export function VisionPanel({ kind, url, forensics, bands, baseScore = null, onL
   }, [bands, forensics, kind, theme, tick, url]);
 
   const caption = scanning
-    ? frameReady
-      ? "Kadr skan edilir"
+    ? laser
+      ? "Üz skan edilir"
       : frameFailed || !url
         ? "Kadr oxunmadı — yer tutucu matris"
-        : "Kadr yüklənir"
+        : !frameReady
+          ? "Kadr yüklənir"
+          : forensics?.detail || "Skan tamamlandı"
     : kind === "audio"
       ? "Akustik rejim — video və ya şəkil gözlənilir"
       : "CV modul video və ya şəkil gözləyir";
+  const scoreColor = tone === "synthetic" ? "text-red-500" : tone === "real" ? "text-emerald-400" : "text-slate-400";
+  const frameColor = tone === "synthetic" ? "border-red-500" : "border-cyan-300";
+  const laserColor = tone === "synthetic" ? "bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)]" : "bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.95)]";
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">KOMPÜTER GÖRMƏSİ (CV) FORENZİK ANALİZ PANELİ</div>
-        <span className="font-mono text-[10px] text-slate-400">{readout === null ? "gözləyir" : `${readout}%`}</span>
+        <span className={cn("font-mono text-xs font-bold", scoreColor)}>
+          {forensics ? `${forensics.score}%` : "gözləyir"}
+        </span>
       </div>
       <div className="relative h-[180px] overflow-hidden rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950">
         {kind === "video" && url ? (
@@ -225,10 +229,10 @@ export function VisionPanel({ kind, url, forensics, bands, baseScore = null, onL
           />
         ) : null}
         <canvas ref={canvasRef} className="h-full w-full" />
-        <div className="animate-scan pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.95)]" />
-        <div className="absolute bottom-2 left-2 rounded-lg border border-emerald-400/40 bg-slate-950/80 px-2 py-1 text-[10px] text-emerald-400">
+        {scanning && url ? <FaceFrame color={frameColor} /> : null}
+        {laser ? <div className={cn("animate-scan pointer-events-none absolute inset-x-0 z-20 h-0.5", laserColor)} /> : null}
+        <div className={cn("absolute bottom-2 left-2 z-20 max-w-[90%] rounded-lg border bg-slate-950/80 px-2 py-1 text-[10px]", tone === "synthetic" ? "border-red-500/50 text-red-500" : "border-emerald-400/40 text-emerald-400")}>
           {caption}
-          {forensics ? ` · GAN ${forensics.smoothness}%` : ""}
         </div>
       </div>
     </div>

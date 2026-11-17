@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { StillForensics } from "../lib/vision.ts";
+import type { FaceBox, StillForensics } from "../lib/vision.ts";
 import type { ForensicKind } from "../lib/forensicClass.ts";
 import { cn } from "../lib/utils.ts";
 import { useDocumentTheme } from "../lib/useDocumentTheme.ts";
@@ -68,10 +68,32 @@ function drawCells(
 const mediaClass = "absolute inset-0 h-full w-full origin-top object-cover object-[center_top]";
 const mediaStyle = { objectPosition: "center top", transform: "scale(1.15)" };
 
-function FaceFrame({ color }: { color: string }) {
+function projectFace(face: FaceBox, sourceWidth: number, sourceHeight: number, viewWidth: number, viewHeight: number) {
+  const cover = Math.max(viewWidth / sourceWidth, viewHeight / sourceHeight);
+  const drawnWidth = sourceWidth * cover;
+  const drawnHeight = sourceHeight * cover;
+  const offsetX = (viewWidth - drawnWidth) / 2;
+  const left0 = offsetX + face.x * drawnWidth;
+  const top0 = face.y * drawnHeight;
+  const width0 = face.width * drawnWidth;
+  const height0 = face.height * drawnHeight;
+  const originX = viewWidth / 2;
+  const zoom = 1.15;
+  return {
+    left: ((originX + (left0 - originX) * zoom) / viewWidth) * 100,
+    top: ((top0 * zoom) / viewHeight) * 100,
+    width: ((width0 * zoom) / viewWidth) * 100,
+    height: ((height0 * zoom) / viewHeight) * 100,
+  };
+}
+
+function FaceFrame({ color, box }: { color: string; box: { left: number; top: number; width: number; height: number } | null }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      <div className="absolute top-[8%] left-1/2 aspect-square h-[70%] -translate-x-1/2">
+      <div
+        className={box ? "absolute" : "absolute top-[8%] left-1/2 aspect-square h-[70%] -translate-x-1/2"}
+        style={box ? { left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%` } : undefined}
+      >
         <span className={cn("absolute top-0 left-0 h-6 w-6 border-t-2 border-l-2", color)} />
         <span className={cn("absolute top-0 right-0 h-6 w-6 border-t-2 border-r-2", color)} />
         <span className={cn("absolute bottom-0 left-0 h-6 w-6 border-b-2 border-l-2", color)} />
@@ -97,6 +119,7 @@ function drawMatrix(
 
 export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: VisionPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [tick, setTick] = useState(0);
   const [frameReady, setFrameReady] = useState(false);
@@ -114,9 +137,11 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    const stage = stageRef.current;
     if (!canvas) return;
     const observer = new ResizeObserver(() => setTick((value) => value + 1));
     observer.observe(canvas);
+    if (stage) observer.observe(stage);
     return () => observer.disconnect();
   }, []);
 
@@ -201,6 +226,12 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
     : kind === "audio"
       ? "Akustik rejim — video və ya şəkil gözlənilir"
       : "CV modul video və ya şəkil gözləyir";
+  const stageWidth = stageRef.current?.clientWidth ?? 0;
+  const stageHeight = stageRef.current?.clientHeight ?? 0;
+  const faceBox =
+    forensics?.face && forensics.sourceWidth > 1 && forensics.sourceHeight > 1 && stageWidth > 1 && stageHeight > 1
+      ? projectFace(forensics.face, forensics.sourceWidth, forensics.sourceHeight, stageWidth, stageHeight)
+      : null;
   const scoreColor = tone === "synthetic" ? "text-red-500" : tone === "real" ? "text-emerald-400" : "text-slate-400";
   const frameColor = tone === "synthetic" ? "border-red-500" : "border-cyan-300";
   const laserColor = tone === "synthetic" ? "bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)]" : "bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.95)]";
@@ -213,7 +244,7 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
           {forensics ? `${forensics.score}%` : "gözləyir"}
         </span>
       </div>
-      <div className="relative h-[180px] overflow-hidden rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950">
+      <div ref={stageRef} className="relative h-[180px] overflow-hidden rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950">
         {kind === "video" && url ? (
           <video
             ref={videoRef}
@@ -248,7 +279,7 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
           />
         ) : null}
         <canvas ref={canvasRef} className={cn("h-full w-full", frameReady && "invisible")} />
-        {scanning && url ? <FaceFrame color={frameColor} /> : null}
+        {scanning && url ? <FaceFrame color={frameColor} box={faceBox} /> : null}
         {laser ? <div className={cn("animate-scan pointer-events-none absolute inset-x-0 z-20 h-0.5", laserColor)} /> : null}
         <div className={cn("absolute bottom-2 left-2 z-20 max-w-[90%] rounded-lg border bg-slate-950/80 px-2 py-1 text-[10px]", tone === "synthetic" ? "border-red-500/50 text-red-500" : "border-emerald-400/40 text-emerald-400")}>
           {caption}

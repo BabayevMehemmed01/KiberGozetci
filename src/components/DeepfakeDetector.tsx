@@ -6,7 +6,7 @@ import { decodeToMono } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
 import { presentAcoustic } from "../lib/forensicClass.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
-import { inspectImageFile, inspectVideoFrame, namedStill, type StillForensics } from "../lib/vision.ts";
+import { inspectImageFile, inspectVideoFrame, type StillForensics } from "../lib/vision.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
 import { SpectrogramCanvas } from "./SpectrogramCanvas.tsx";
@@ -137,7 +137,7 @@ export function DeepfakeDetector() {
         rememberPreview(URL.createObjectURL(file));
         setMediaKind("video");
         setVideo(lip);
-        setStill(frame ?? namedStill(file.name));
+        setStill(frame);
         setVisionLabel(file.name);
       } else if (!options?.preserveVision) {
         rememberPreview(null);
@@ -163,7 +163,7 @@ export function DeepfakeDetector() {
       if (videoFile && file) {
         try {
           const lip = await estimateLipSync(file, null, 0);
-          const frame = (await inspectVideoFrame(file)) ?? namedStill(file.name);
+          const frame = await inspectVideoFrame(file);
           rememberPreview(URL.createObjectURL(file));
           setMediaKind("video");
           setVideo(lip);
@@ -174,7 +174,7 @@ export function DeepfakeDetector() {
         } catch {
           rememberPreview(URL.createObjectURL(file));
           setMediaKind("video");
-          setStill(namedStill(file.name));
+          setStill(null);
           setVisionLabel(file.name);
           setError("Video kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
         }
@@ -218,10 +218,9 @@ export function DeepfakeDetector() {
       rememberPreview(URL.createObjectURL(file));
       setMediaKind("image");
       setVisionLabel(file.name);
-      const named = namedStill(file.name);
-      setStill(named);
+      setStill(null);
       setScanToken((token) => token + 1);
-      if (!named) setError("Şəkil kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
+      setError("Şəkil kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
     } finally {
       setLoading(false);
     }
@@ -484,7 +483,12 @@ export function DeepfakeDetector() {
                           <p className="mt-1 text-xs leading-5 text-slate-400">{reason.detail}</p>
                         </li>
                       ))}
-                      {still?.tone === "unknown" ? describe(report, video).map((line) => (
+                      {still?.reasons.map((line) => (
+                        <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
+                          {line}
+                        </li>
+                      ))}
+                      {!still ? describe(report, video).map((line) => (
                         <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
                           {line}
                         </li>
@@ -516,7 +520,19 @@ export function DeepfakeDetector() {
                 </>
               ) : null}
               {still && !audioReady ? (
-                <Meter label="CV piksel uyğunluğu" value={still.score} intent="risk" hint={still.detail} />
+                <>
+                  <Meter label="CV piksel uyğunluğu" value={still.score} intent="risk" hint={still.detail} />
+                  <div>
+                    <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">SÜNİ İNTELLEKT İZAHI</div>
+                    <ul className="mt-2 space-y-2 text-sm text-slate-300">
+                      {still.reasons.map((line) => (
+                        <li key={line} className="rounded-lg border border-[#1E293B] bg-[#060B14] px-3 py-2 text-xs leading-5">
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
               ) : null}
             </div>
           )}

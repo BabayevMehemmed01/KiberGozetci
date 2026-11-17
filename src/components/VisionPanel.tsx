@@ -238,7 +238,7 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
       : "CV modul video və ya şəkil gözləyir";
   const stageWidth = stageRef.current?.clientWidth ?? 0;
   const stageHeight = stageRef.current?.clientHeight ?? 0;
-  const canProject = Boolean(forensics && !forensics.noFace && forensics.sourceWidth > 1 && forensics.sourceHeight > 1 && stageWidth > 1 && stageHeight > 1);
+  const canProject = Boolean(forensics && !forensics.noFace && !forensics.inconclusive && forensics.sourceWidth > 1 && forensics.sourceHeight > 1 && stageWidth > 1 && stageHeight > 1);
   const faceBoxes = canProject
     ? forensics!.faces.map((face) => projectFace(face.box, forensics!.sourceWidth, forensics!.sourceHeight, stageWidth, stageHeight))
     : [];
@@ -257,7 +257,7 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">KOMPÜTER GÖRMƏSİ (CV) FORENZİK ANALİZ PANELİ</div>
         <span className={cn("font-mono text-xs font-bold", scoreColor)}>
-          {forensics?.noFace ? "üz yoxdur" : forensics ? `${forensics.score}%` : "gözləyir"}
+          {forensics?.inconclusive ? "qeyri-müəyyən" : forensics?.noFace ? "üz yoxdur" : forensics ? `${forensics.score}%` : "gözləyir"}
         </span>
       </div>
       <div ref={stageRef} className="relative h-[180px] overflow-hidden rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950">

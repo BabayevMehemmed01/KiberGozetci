@@ -43,6 +43,7 @@ export interface StillForensics {
   category: FaceCategory;
   risk: FaceRisk;
   heatmap: number[];
+  inconclusive?: boolean;
 }
 
 export interface PixelSignals {
@@ -1504,6 +1505,20 @@ export async function inspectImageFile(file: File): Promise<{ url: string; foren
     URL.revokeObjectURL(url);
     throw error;
   }
+}
+
+const EMPTY_VIDEO_META: MetadataSignals = {
+  aiLabels: [],
+  editLabels: [],
+  cameraLabels: [],
+  optical: false,
+  generatedPng: false,
+};
+
+export async function inspectCurrentVideoFrame(video: HTMLVideoElement): Promise<StillForensics | null> {
+  const width = video.videoWidth || 320;
+  const height = video.videoHeight || 180;
+  return inspectSource(video, width, height, EMPTY_VIDEO_META);
 }
 
 export async function inspectVideoFrame(file: File): Promise<StillForensics | null> {

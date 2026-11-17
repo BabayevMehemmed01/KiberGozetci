@@ -4,8 +4,9 @@ import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
 import { decodeToMono, shortSpeechReport } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
-import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
-import { inspectImageFile, inspectVideoFrame, type StillForensics } from "../lib/vision.ts";
+import { analyzeVideo } from "../lib/videoForensics.ts";
+import type { VideoForensics } from "../lib/videoSync.ts";
+import { inspectImageFile, type StillForensics } from "../lib/vision.ts";
 import { useSoc } from "../context/SocContext.tsx";
 import { SignalCanvas } from "./SignalCanvas.tsx";
 import { SpectrogramCanvas } from "./SpectrogramCanvas.tsx";
@@ -247,7 +248,7 @@ export function DeepfakeDetector() {
     setReport(null);
     setSamples(null);
     setBuffer(null);
-    const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name)));
+    const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm|mov)$/i.test(file.name)));
     if (videoFile) {
       setVideo(null);
       setStill(null);
@@ -255,20 +256,54 @@ export function DeepfakeDetector() {
     resetConsensus();
     try {
       const context = ensureGraph();
-      const decoded = await decodeToMono(context, data);
+      let decoded: Awaited<ReturnType<typeof decodeToMono>> | null = null;
+      try {
+        decoded = await decodeToMono(context, data);
+      } catch {
+        decoded = null;
+      }
+      if (videoFile && file) {
+        const slice = decoded ? decoded.samples.subarray(0, Math.min(decoded.samples.length, decoded.sampleRate * 12)) : null;
+        const acoustic = slice && decoded ? analyzePcm(slice, decoded.sampleRate) : null;
+        if (acoustic) consensusRef.current = [acoustic];
+        try {
+          const study = await analyzeVideo(file, slice, decoded?.sampleRate ?? 0, acoustic);
+          rememberPreview(URL.createObjectURL(file));
+          setMediaKind("video");
+          setVideo(study.clip);
+          setStill(study.still);
+          setVisionLabel(file.name);
+          if (decoded && slice && acoustic) {
+            setSamples(slice);
+            setSampleRate(decoded.sampleRate);
+            setBuffer(decoded.buffer);
+            setReport(acoustic);
+            try {
+              play(decoded.buffer);
+            } catch {
+              setPlaying(false);
+            }
+          }
+          setScanToken((token) => token + 1);
+          setAudioLabel(nextLabel);
+        } catch {
+          rememberPreview(URL.createObjectURL(file));
+          setMediaKind("video");
+          setStill(null);
+          setVisionLabel(file.name);
+          setError("Video kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
+        }
+        return;
+      }
+      if (!decoded) {
+        setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG, MP4, JPG və ya PNG formatında yenidən cəhd edin.");
+        return;
+      }
       const limit = Math.min(decoded.samples.length, decoded.sampleRate * 12);
       const slice = decoded.samples.subarray(0, limit);
       const nextReport = analyzePcm(slice, decoded.sampleRate);
       consensusRef.current = [nextReport];
-      if (videoFile && file) {
-        const lip = await estimateLipSync(file, slice, decoded.sampleRate);
-        const frame = await inspectVideoFrame(file);
-        rememberPreview(URL.createObjectURL(file));
-        setMediaKind("video");
-        setVideo(lip);
-        setStill(frame);
-        setVisionLabel(file.name);
-      } else if (!options?.preserveVision) {
+      if (!options?.preserveVision) {
         rememberPreview(null);
         setMediaKind("audio");
         setVideo(null);
@@ -289,27 +324,7 @@ export function DeepfakeDetector() {
         setPlaying(false);
       }
     } catch {
-      if (videoFile && file) {
-        try {
-          const lip = await estimateLipSync(file, null, 0);
-          const frame = await inspectVideoFrame(file);
-          rememberPreview(URL.createObjectURL(file));
-          setMediaKind("video");
-          setVideo(lip);
-          setStill(frame);
-          setVisionLabel(file.name);
-          setAudioLabel(nextLabel);
-          setError("Video kadrları oxundu, amma səs izi açılmadı. Tam spektr üçün WAV, MP3 və ya OGG seçin.");
-        } catch {
-          rememberPreview(URL.createObjectURL(file));
-          setMediaKind("video");
-          setStill(null);
-          setVisionLabel(file.name);
-          setError("Video kadrı oxunmadı. CV skaner yer tutucu matris üzərində davam edir.");
-        }
-      } else {
-        setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG, MP4, JPG və ya PNG formatında yenidən cəhd edin.");
-      }
+      setError("Bu faylın səs izi oxunmadı. WAV, MP3, OGG, MP4, JPG və ya PNG formatında yenidən cəhd edin.");
     } finally {
       setLoading(false);
     }
@@ -362,9 +377,9 @@ export function DeepfakeDetector() {
       await loadStill(file);
       return;
     }
-    const allowed = /\.(wav|mp3|ogg|mp4|webm)$/i.test(file.name) || file.type.startsWith("audio/") || file.type.startsWith("video/");
+    const allowed = /\.(wav|mp3|ogg|mp4|webm|mov)$/i.test(file.name) || file.type.startsWith("audio/") || file.type.startsWith("video/");
     if (!allowed) {
-      setError("Yalnız WAV, MP3, OGG, MP4, WEBM, JPG, PNG və WEBP faylları qəbul edilir.");
+      setError("Yalnız WAV, MP3, OGG, MP4, WEBM, MOV, JPG, PNG və WEBP faylları qəbul edilir.");
       return;
     }
     clearAcoustic();
@@ -508,7 +523,7 @@ export function DeepfakeDetector() {
             <div>
               <Upload className="mx-auto mb-3 h-7 w-7 text-cyan-300" />
               <div className="text-sm font-semibold text-slate-100">Faylı buraya sürükləyin</div>
-              <p className="mt-1 text-xs text-slate-500">WAV, MP3, OGG, MP4, WEBM, JPG, PNG və ya WEBP. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
+              <p className="mt-1 text-xs text-slate-500">WAV, MP3, OGG, MP4, WEBM, MOV, JPG, PNG və ya WEBP. Hazır nümunələri də yükləyib ata bilərsiniz.</p>
             </div>
           </button>
           <button
@@ -599,9 +614,10 @@ export function DeepfakeDetector() {
                   tone={verdict.tone}
                 />
               ) : null}
-              {still?.noFace ? (
+              {still?.noFace || still?.inconclusive ? (
                 <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-4 text-amber-100">
                   <div className="text-base font-bold">{still.verdict}</div>
+                  {still.detail && still.detail !== still.verdict ? <p className="mt-1 text-sm">{still.detail}</p> : null}
                 </div>
               ) : still ? (
                 <ScoreReadout
@@ -682,7 +698,7 @@ export function DeepfakeDetector() {
                   </button>
                 </>
               ) : null}
-              {still && !still.noFace && !audioReady ? (
+              {still && !still.noFace && !still.inconclusive && !audioReady ? (
                 <>
                   <Meter label="CV piksel uyğunluğu" value={still.score} intent="risk" hint={still.detail} />
                   <div>

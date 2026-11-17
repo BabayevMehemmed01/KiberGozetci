@@ -65,34 +65,44 @@ function drawCells(
   }
 }
 
-const mediaClass = "absolute inset-0 h-full w-full origin-top object-cover object-[center_top]";
-const mediaStyle = { objectPosition: "center top", transform: "scale(1.15)" };
+const mediaClass = "absolute inset-0 h-full w-full object-contain";
 
-function projectFace(face: FaceBox, sourceWidth: number, sourceHeight: number, viewWidth: number, viewHeight: number) {
-  const cover = Math.max(viewWidth / sourceWidth, viewHeight / sourceHeight);
-  const drawnWidth = sourceWidth * cover;
-  const drawnHeight = sourceHeight * cover;
-  const offsetX = (viewWidth - drawnWidth) / 2;
-  const left0 = offsetX + face.x * drawnWidth;
-  const top0 = face.y * drawnHeight;
-  const width0 = face.width * drawnWidth;
-  const height0 = face.height * drawnHeight;
-  const originX = viewWidth / 2;
-  const zoom = 1.15;
+function containPlacement(sourceWidth: number, sourceHeight: number, viewWidth: number, viewHeight: number) {
+  const scale = Math.min(viewWidth / sourceWidth, viewHeight / sourceHeight);
+  const drawnWidth = sourceWidth * scale;
+  const drawnHeight = sourceHeight * scale;
   return {
-    left: ((originX + (left0 - originX) * zoom) / viewWidth) * 100,
-    top: ((top0 * zoom) / viewHeight) * 100,
-    width: ((width0 * zoom) / viewWidth) * 100,
-    height: ((height0 * zoom) / viewHeight) * 100,
+    offsetX: (viewWidth - drawnWidth) / 2,
+    offsetY: (viewHeight - drawnHeight) / 2,
+    drawnWidth,
+    drawnHeight,
   };
 }
 
-function FaceFrame({ color, box }: { color: string; box: { left: number; top: number; width: number; height: number } | null }) {
+function projectFace(face: FaceBox, sourceWidth: number, sourceHeight: number, viewWidth: number, viewHeight: number) {
+  const place = containPlacement(sourceWidth, sourceHeight, viewWidth, viewHeight);
+  return {
+    left: ((place.offsetX + face.x * place.drawnWidth) / viewWidth) * 100,
+    top: ((place.offsetY + face.y * place.drawnHeight) / viewHeight) * 100,
+    width: ((face.width * place.drawnWidth) / viewWidth) * 100,
+    height: ((face.height * place.drawnHeight) / viewHeight) * 100,
+  };
+}
+
+function projectPoint(x: number, y: number, sourceWidth: number, sourceHeight: number, viewWidth: number, viewHeight: number) {
+  const place = containPlacement(sourceWidth, sourceHeight, viewWidth, viewHeight);
+  return {
+    left: ((place.offsetX + x * place.drawnWidth) / viewWidth) * 100,
+    top: ((place.offsetY + y * place.drawnHeight) / viewHeight) * 100,
+  };
+}
+
+function FaceFrame({ color, box }: { color: string; box: { left: number; top: number; width: number; height: number } }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
       <div
-        className={box ? "absolute" : "absolute top-[8%] left-1/2 aspect-square h-[70%] -translate-x-1/2"}
-        style={box ? { left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%` } : undefined}
+        className="absolute"
+        style={{ left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%` }}
       >
         <span className={cn("absolute top-0 left-0 h-6 w-6 border-t-2 border-l-2", color)} />
         <span className={cn("absolute top-0 right-0 h-6 w-6 border-t-2 border-r-2", color)} />
@@ -228,20 +238,26 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
       : "CV modul video və ya şəkil gözləyir";
   const stageWidth = stageRef.current?.clientWidth ?? 0;
   const stageHeight = stageRef.current?.clientHeight ?? 0;
-  const faceBox =
-    forensics?.face && forensics.sourceWidth > 1 && forensics.sourceHeight > 1 && stageWidth > 1 && stageHeight > 1
-      ? projectFace(forensics.face, forensics.sourceWidth, forensics.sourceHeight, stageWidth, stageHeight)
-      : null;
-  const scoreColor = tone === "synthetic" ? "text-red-500" : tone === "real" ? "text-emerald-400" : "text-slate-400";
-  const frameColor = tone === "synthetic" ? "border-red-500" : "border-cyan-300";
-  const laserColor = tone === "synthetic" ? "bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)]" : "bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.95)]";
+  const canProject = Boolean(forensics && !forensics.noFace && forensics.sourceWidth > 1 && forensics.sourceHeight > 1 && stageWidth > 1 && stageHeight > 1);
+  const faceBoxes = canProject
+    ? forensics!.faces.map((face) => projectFace(face.box, forensics!.sourceWidth, forensics!.sourceHeight, stageWidth, stageHeight))
+    : [];
+  const landmarkDots = canProject
+    ? forensics!.faces.flatMap((face) =>
+        face.landmarks.map((point) => projectPoint(point.x, point.y, forensics!.sourceWidth, forensics!.sourceHeight, stageWidth, stageHeight)),
+      )
+    : [];
+  const risk = forensics?.noFace ? "none" : forensics?.risk ?? (tone === "synthetic" ? "generated" : tone === "real" ? "real" : "none");
+  const scoreColor = risk === "generated" ? "text-red-500" : risk === "edited" ? "text-amber-400" : risk === "real" ? "text-emerald-400" : "text-slate-400";
+  const frameColor = risk === "generated" ? "border-red-500" : risk === "edited" ? "border-amber-400" : "border-cyan-300";
+  const laserColor = risk === "generated" ? "bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)]" : risk === "edited" ? "bg-amber-400 shadow-[0_0_16px_rgba(251,191,36,0.95)]" : "bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.95)]";
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[11px] font-bold tracking-[0.16em] text-cyan-300">KOMPÜTER GÖRMƏSİ (CV) FORENZİK ANALİZ PANELİ</div>
         <span className={cn("font-mono text-xs font-bold", scoreColor)}>
-          {forensics ? `${forensics.score}%` : "gözləyir"}
+          {forensics?.noFace ? "üz yoxdur" : forensics ? `${forensics.score}%` : "gözləyir"}
         </span>
       </div>
       <div ref={stageRef} className="relative h-[180px] overflow-hidden rounded-xl border border-slate-300 bg-slate-100 dark:border-[#1E293B] dark:bg-slate-950">
@@ -250,7 +266,6 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
             ref={videoRef}
             src={url}
             className={cn(mediaClass, frameReady ? "opacity-100" : "opacity-0")}
-            style={mediaStyle}
             muted
             playsInline
             autoPlay
@@ -270,7 +285,6 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
             src={url}
             alt=""
             className={cn(mediaClass, frameReady ? "opacity-100" : "opacity-0")}
-            style={mediaStyle}
             onLoad={() => setFrameReady(true)}
             onError={() => {
               setFrameReady(false);
@@ -279,9 +293,20 @@ export function VisionPanel({ kind, url, forensics, bands, tone = "unknown" }: V
           />
         ) : null}
         <canvas ref={canvasRef} className={cn("h-full w-full", frameReady && "invisible")} />
-        {scanning && url ? <FaceFrame color={frameColor} box={faceBox} /> : null}
+        {scanning && url
+          ? faceBoxes.map((box, index) => <FaceFrame key={`${box.left.toFixed(2)}-${box.top.toFixed(2)}-${index}`} color={frameColor} box={box} />)
+          : null}
+        {scanning && url
+          ? landmarkDots.map((point, index) => (
+              <span
+                key={`lm-${index}`}
+                className={cn("pointer-events-none absolute z-10 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full", risk === "generated" ? "bg-red-500" : risk === "edited" ? "bg-amber-400" : "bg-cyan-300")}
+                style={{ left: `${point.left}%`, top: `${point.top}%` }}
+              />
+            ))
+          : null}
         {laser ? <div className={cn("animate-scan pointer-events-none absolute inset-x-0 z-20 h-0.5", laserColor)} /> : null}
-        <div className={cn("absolute bottom-2 left-2 z-20 max-w-[90%] rounded-lg border bg-slate-950/80 px-2 py-1 text-[10px]", tone === "synthetic" ? "border-red-500/50 text-red-500" : "border-emerald-400/40 text-emerald-400")}>
+        <div className={cn("absolute bottom-2 left-2 z-20 max-w-[90%] rounded-lg border bg-slate-950/80 px-2 py-1 text-[10px]", risk === "generated" ? "border-red-500/50 text-red-500" : risk === "edited" || forensics?.noFace ? "border-amber-400/40 text-amber-200" : "border-emerald-400/40 text-emerald-400")}>
           {caption}
         </div>
       </div>

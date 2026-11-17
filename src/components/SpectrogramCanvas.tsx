@@ -5,6 +5,7 @@ interface SpectrogramCanvasProps {
   sampleRate: number;
   analyser: AnalyserNode | null;
   live: boolean;
+  heatmap?: number[] | null;
 }
 
 const BINS = 42;
@@ -37,16 +38,40 @@ function frameMagnitude(samples: Float32Array, start: number, bin: number): numb
   return Math.hypot(real, imaginary);
 }
 
-export function SpectrogramCanvas({ samples, sampleRate, analyser, live }: SpectrogramCanvasProps) {
+function paintHeatmap(image: ImageData, heatmap: number[], pixelWidth: number, pixelHeight: number) {
+  const cells = Math.max(1, Math.round(Math.sqrt(heatmap.length)));
+  for (let row = 0; row < cells; row += 1) {
+    for (let column = 0; column < cells; column += 1) {
+      const [red, green, blue] = heat(heatmap[row * cells + column] ?? 0);
+      const left = Math.floor((column * pixelWidth) / cells);
+      const right = Math.floor(((column + 1) * pixelWidth) / cells);
+      const top = Math.floor((row * pixelHeight) / cells);
+      const bottom = Math.floor(((row + 1) * pixelHeight) / cells);
+      for (let y = top; y < bottom; y += 1) {
+        for (let x = left; x < right; x += 1) {
+          const offset = (y * image.width + x) * 4;
+          image.data[offset] = red;
+          image.data[offset + 1] = green;
+          image.data[offset + 2] = blue;
+          image.data[offset + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
+export function SpectrogramCanvas({ samples, sampleRate, analyser, live, heatmap = null }: SpectrogramCanvasProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const samplesRef = useRef(samples);
   const analyserRef = useRef(analyser);
   const liveRef = useRef(live);
+  const heatmapRef = useRef(heatmap);
   const columnsRef = useRef<Uint8Array[]>([]);
   const [tick, setTick] = useState(0);
   samplesRef.current = samples;
   analyserRef.current = analyser;
   liveRef.current = live;
+  heatmapRef.current = heatmap;
 
   useEffect(() => {
     const canvas = ref.current;
@@ -102,8 +127,12 @@ export function SpectrogramCanvas({ samples, sampleRate, analyser, live }: Spect
       const image = context.createImageData(pixelWidth, pixelHeight);
       const active = liveRef.current && analyserRef.current;
       const source = samplesRef.current;
+      const forensic = heatmapRef.current;
+      const showHeatmap = !active && forensic && forensic.length >= 64;
 
-      if (active && analyserRef.current) {
+      if (showHeatmap && forensic) {
+        paintHeatmap(image, forensic, pixelWidth, pixelHeight);
+      } else if (active && analyserRef.current) {
         step += 1;
         if (step % 3 === 0) {
           const freq = new Uint8Array(analyserRef.current.frequencyBinCount);
@@ -142,7 +171,7 @@ export function SpectrogramCanvas({ samples, sampleRate, analyser, live }: Spect
       }
 
       context.putImageData(image, 0, 0);
-      if (!active && !(source && source.length > 80)) {
+      if (!active && !showHeatmap && !(source && source.length > 80)) {
         context.fillStyle = "#64748B";
         context.font = "13px Manrope, sans-serif";
         context.textAlign = "center";
@@ -151,14 +180,14 @@ export function SpectrogramCanvas({ samples, sampleRate, analyser, live }: Spect
         context.fillStyle = "rgba(148, 163, 184, 0.9)";
         context.font = "10px JetBrains Mono, monospace";
         context.textAlign = "left";
-        context.fillText(source ? `${Math.round(sampleRate / 1000)} kHs` : "canlı", 8, 14);
+        context.fillText(showHeatmap ? "üz forenzikası" : source ? `${Math.round(sampleRate / 1000)} kHs` : "canlı", 8, 14);
       }
       if (active) frame = requestAnimationFrame(draw);
     };
 
     draw();
     return () => cancelAnimationFrame(frame);
-  }, [tick, live, samples, analyser, sampleRate]);
+  }, [tick, live, samples, analyser, sampleRate, heatmap]);
 
   return (
     <div>

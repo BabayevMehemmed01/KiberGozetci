@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Mic, Pause, Play, Upload } from "lucide-react";
 import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
-import { decodeToMono } from "../lib/audio.ts";
+import { decodeToMono, shortSpeechReport, trimAndNormalize } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
 import { presentAcoustic } from "../lib/forensicClass.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
@@ -41,7 +41,8 @@ export function DeepfakeDetector() {
   const [loggedLabel, setLoggedLabel] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const micGraphRef = useRef<{ source: MediaStreamAudioSourceNode; processor: ScriptProcessorNode; mute: GainNode } | null>(null);
   const previewRef = useRef<string | null>(null);
 
   function rememberPreview(url: string | null) {
@@ -99,11 +100,79 @@ export function DeepfakeDetector() {
   useEffect(
     () => () => {
       stopPlayback();
+      micGraphRef.current?.processor.disconnect();
+      micGraphRef.current?.source.disconnect();
+      micGraphRef.current?.mute.disconnect();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (previewRef.current) URL.revokeObjectURL(previewRef.current);
     },
     [],
   );
+
+  function clearAcoustic() {
+    stopPlayback();
+    setPlaying(false);
+    setReport(null);
+    setSamples(null);
+    setBuffer(null);
+    setError("");
+    setAudioLabel("");
+  }
+
+  function releaseMic() {
+    const graph = micGraphRef.current;
+    micGraphRef.current = null;
+    if (graph) {
+      graph.processor.onaudioprocess = null;
+      graph.processor.disconnect();
+      graph.source.disconnect();
+      graph.mute.disconnect();
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setMicAnalyser(null);
+  }
+
+  async function finishLivePcm(raw: Float32Array, rate: number) {
+    setLoading(true);
+    setError("");
+    setReport(null);
+    setSamples(null);
+    setBuffer(null);
+    try {
+      const prepared = trimAndNormalize(raw, rate);
+      if (prepared.activeSec < 1.5 || prepared.samples.length < Math.round(rate * 0.2)) {
+        setReport(shortSpeechReport());
+        setAudioLabel("Canlı mikrofon yazısı");
+        setScanToken((token) => token + 1);
+        return;
+      }
+      const context = ensureGraph();
+      const audioBuffer = context.createBuffer(1, prepared.samples.length, rate);
+      audioBuffer.getChannelData(0).set(prepared.samples);
+      const nextReport = presentAcoustic(analyzePcm(prepared.samples, rate), {
+        name: "canli-mikrofon",
+        liveMic: true,
+        durationSec: prepared.activeSec,
+      });
+      setSamples(prepared.samples);
+      setSampleRate(rate);
+      setBuffer(audioBuffer);
+      setReport(nextReport);
+      setAudioLabel("Canlı mikrofon yazısı");
+      setScanToken((token) => token + 1);
+      try {
+        play(audioBuffer);
+      } catch {
+        setPlaying(false);
+      }
+    } catch {
+      setReport(shortSpeechReport());
+      setAudioLabel("Canlı mikrofon yazısı");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function inspect(
     data: ArrayBuffer,
@@ -111,9 +180,13 @@ export function DeepfakeDetector() {
     file?: File,
     options?: { liveMic?: boolean; preserveVision?: boolean; sourceName?: string },
   ) {
+    stopPlayback();
+    setPlaying(false);
     setLoading(true);
     setError("");
     setReport(null);
+    setSamples(null);
+    setBuffer(null);
     const videoFile = Boolean(file && (file.type.startsWith("video/") || /\.(mp4|webm)$/i.test(file.name)));
     if (videoFile) {
       setVideo(null);
@@ -207,6 +280,7 @@ export function DeepfakeDetector() {
     setLoading(true);
     setError("");
     setVideo(null);
+    setStill(null);
     try {
       const result = await inspectImageFile(file);
       rememberPreview(result.url);
@@ -237,20 +311,36 @@ export function DeepfakeDetector() {
       setError("Yalnız WAV, MP3, OGG, MP4, WEBM, JPG, PNG və WEBP faylları qəbul edilir.");
       return;
     }
+    clearAcoustic();
+    setStill(null);
+    setVideo(null);
+    setVisionLabel("");
+    rememberPreview(null);
+    setMediaKind("audio");
     ensureGraph();
-    await inspect(await file.arrayBuffer(), file.name, file, { preserveVision: true, sourceName: file.name });
+    await inspect(await file.arrayBuffer(), file.name, file, { preserveVision: false, sourceName: file.name });
   }
 
   async function toggleMic() {
     if (recording) {
       setRecording(false);
-      recorderRef.current?.stop();
+      const rate = contextRef.current?.sampleRate ?? sampleRate;
+      const chunks = pcmChunksRef.current;
+      pcmChunksRef.current = [];
+      releaseMic();
+      const merged = new Float32Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      await finishLivePcm(merged, rate);
       return;
     }
     const context = ensureGraph();
-    stopPlayback();
-    setPlaying(false);
-    setError("");
+    clearAcoustic();
+    setScanToken((token) => token + 1);
+    pcmChunksRef.current = [];
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -261,28 +351,21 @@ export function DeepfakeDetector() {
       node.fftSize = 2048;
       node.smoothingTimeConstant = 0.72;
       source.connect(node);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      processor.onaudioprocess = (event) => {
+        const channel = event.inputBuffer.getChannelData(0);
+        pcmChunksRef.current.push(new Float32Array(channel));
+      };
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(context.destination);
+      micGraphRef.current = { source, processor, mute };
       setMicAnalyser(node);
-      const chunks: Blob[] = [];
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        void blob.arrayBuffer().then((data) =>
-          inspect(data, "Canlı mikrofon yazısı", undefined, {
-            liveMic: true,
-            preserveVision: true,
-            sourceName: "canli-mikrofon",
-          }),
-        );
-      };
-      recorderRef.current = recorder;
-      recorder.start();
       setRecording(true);
     } catch {
+      releaseMic();
       setRecording(false);
       setError("Mikrofona giriş icazəsi verilmədi və ya cihaz tapılmadı.");
     }
@@ -291,7 +374,7 @@ export function DeepfakeDetector() {
   const verdict = report ? verdictFor(report) : null;
   const audioReady = Boolean(report && verdict && !report.unreliable);
   const waveTone = !report || report.unreliable ? "idle" : report.pattern === "synthetic" || report.probability >= 75 ? "synthetic" : report.probability < 40 ? "real" : "idle";
-  const cvTone = still?.tone === "synthetic" ? "critical" : still?.tone === "real" ? "safe" : "muted";
+  const cvTone = still?.risk === "edited" ? "warning" : still?.risk === "generated" || still?.tone === "synthetic" ? "critical" : still?.risk === "real" || still?.tone === "real" ? "safe" : "muted";
 
   return (
     <div className="space-y-4">
@@ -410,7 +493,14 @@ export function DeepfakeDetector() {
             {playing ? "Dayandır" : "Yenidən dinlə"}
           </button>
           <div className="mt-4">
-            <SpectrogramCanvas samples={samples} sampleRate={sampleRate} analyser={recording ? micAnalyser : analyser} live={playing || recording} />
+            <SpectrogramCanvas
+              key={scanToken}
+              samples={samples}
+              sampleRate={sampleRate}
+              analyser={recording ? micAnalyser : analyser}
+              live={playing || recording}
+              heatmap={still && !still.noFace ? still.heatmap : null}
+            />
           </div>
           <div className="mt-4">
             <VisionPanel kind={mediaKind} url={mediaUrl} forensics={still} bands={report?.bands ?? null} tone={still?.tone ?? "unknown"} />
@@ -427,8 +517,8 @@ export function DeepfakeDetector() {
             <div className="space-y-4">
               {report?.unreliable ? (
                 <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-4 text-amber-100">
-                  <div className="text-lg font-bold">Kifayət qədər siqnal yoxdur</div>
-                  <p className="mt-1 text-sm">Analiz üçün ən azı 1 saniyə səs daxil edilməlidir.</p>
+                  <div className="text-lg font-bold">{report.reasons[0]?.title || "Kifayət qədər siqnal yoxdur"}</div>
+                  {report.reasons[0]?.detail ? <p className="mt-1 text-sm">{report.reasons[0].detail}</p> : null}
                 </div>
               ) : null}
               {audioReady && report && verdict ? (
@@ -440,7 +530,11 @@ export function DeepfakeDetector() {
                   tone={verdict.tone}
                 />
               ) : null}
-              {still ? (
+              {still?.noFace ? (
+                <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-4 text-amber-100">
+                  <div className="text-base font-bold">{still.verdict}</div>
+                </div>
+              ) : still ? (
                 <ScoreReadout
                   kicker={audioReady ? "CV NƏTİCƏSİ" : "DİPFEYK EHTİMALI"}
                   value={still.score}
@@ -519,7 +613,7 @@ export function DeepfakeDetector() {
                   </button>
                 </>
               ) : null}
-              {still && !audioReady ? (
+              {still && !still.noFace && !audioReady ? (
                 <>
                   <Meter label="CV piksel uyğunluğu" value={still.score} intent="risk" hint={still.detail} />
                   <div>

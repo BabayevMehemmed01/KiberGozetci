@@ -1,4 +1,5 @@
 import { clamp } from "./utils.ts";
+import { classifyPhishingText } from "./phishingAction.ts";
 
 export interface TextPart {
   text: string;
@@ -296,16 +297,6 @@ export function highlightPressure(text: string): TextPart[] {
   return parts;
 }
 
-function uniqueSignals(hits: Hit[]): Signal[] {
-  const seen = new Set<string>();
-  const list: Signal[] = [];
-  for (const hit of hits) {
-    if (seen.has(hit.signal.phrase)) continue;
-    seen.add(hit.signal.phrase);
-    list.push(hit.signal);
-  }
-  return list;
-}
 
 const SUSPICIOUS_HOST =
   /teyid|login|secure|update|kocurme|kuryer|sifre|parol|otp|verify|blok|hesab-yenile|account|wire|password|bezopas/;
@@ -647,406 +638,6 @@ function findMarkers(text: string): Marker[] {
   return markers;
 }
 
-const MONEY_ROOT = /pul|kocur|kart|hesab|iban|bank|dollar|manat|azn|usd|send|money|account|transfer|pay|cash|wire|para|gonder|перевод|карт|счет|счёт|деньг/;
-const PRESSURE_ROOT = /tez|tecili|derhal|pls|please|asap|urgent|immediately|now|срочно|acil|hemen|bloklan|cerime|serefsiz|mehkeme|polis|hebs/;
-const THEFT_ROOT = /kod|otp|sifre|parol|pin|cvv|verify|login|confirm|код|парол/;
-
-function intentProfile(signals: Signal[], markers: Marker[]) {
-  let money = 0;
-  let pressure = 0;
-  let theft = 0;
-  for (const signal of signals) {
-    const phrase = signal.phrase;
-    if (MONEY_ROOT.test(phrase)) money += 1;
-    if (PRESSURE_ROOT.test(phrase)) pressure += 1;
-    if (THEFT_ROOT.test(phrase)) theft += 1;
-  }
-  const amount = markers.some((marker) => marker.label === "məbləğ və valyuta");
-  const moneyRequest = money >= 2 || (money >= 1 && amount);
-  const intents: string[] = [];
-  let floor = 0;
-  if (moneyRequest) {
-    floor = 84 + Math.min(14, money * 3 + (amount ? 5 : 0) + pressure * 2);
-    floor = Math.min(98, Math.max(84, floor));
-    intents.push("Maliyyə / Kart Köçürmə Tələbi Niyyəti Aşkarlandı");
-  }
-  if (pressure >= 1) intents.push("Tələskənlik, təzyiq və aqressiya niyyəti aşkarlandı");
-  if (theft >= 1) intents.push("Məlumat və OTP oğurluğu niyyəti aşkarlandı");
-  return { money, pressure, theft, amount, floor, intents };
-}
-
-function styleExtras(text: string, folded: string, urgency: number): { score: number; reasons: string[] } {
-  let score = 0;
-  const reasons: string[] = [];
-  const exclamations = text.match(/!/g)?.length ?? 0;
-  if (exclamations >= 3) {
-    score += 18;
-    reasons.push("Həddindən artıq nida işarəsi (`!!!`) ilə təzyiq yaradılır.");
-  } else if (exclamations === 2) {
-    score += 8;
-  }
-  const generic =
-    folded.includes("hörmətli müştəri") ||
-    folded.includes("dear customer") ||
-    folded.includes("уважаемый клиент") ||
-    folded.includes("sayin müştəri") ||
-    folded.includes("sayin müşteri");
-  if (generic && urgency >= 20) {
-    score += 28;
-    reasons.push("Ümumi müştəri müraciəti təhlükə dili ilə birləşir.");
-  }
-  if (text.trim().length < 420 && urgency >= 30) {
-    score += 14;
-    reasons.push("Qısa mətn tələskən qərar verməyə itələyir.");
-  }
-  if (/[A-ZƏÖÜĞŞÇİ]{10,}/.test(text)) {
-    score += 12;
-    reasons.push("Bağıran böyük hərflərlə üslub uyğunsuzluğu var.");
-  }
-  return { score: clamp(score), reasons };
-}
-
-type WallKind = "blackmail" | "money" | "credential" | "malware" | "impersonation" | "pressure";
-type WallRole = "strong" | "media" | "channel" | "paired" | "weak" | "normal";
-
-interface WallRoot {
-  root: string;
-  kind: WallKind;
-  role: WallRole;
-  prefix: boolean;
-}
-
-interface WallHit {
-  kind: WallKind;
-  role: WallRole;
-  start: number;
-  end: number;
-  root: string;
-}
-
-function wallRoot(root: string, kind: WallKind, role: WallRole, prefix = root.length >= 4): WallRoot {
-  return { root, kind, role, prefix };
-}
-
-const SHORT_PREFIX = new Set(["pin", "kod", "otp", "pay", "pul", "tez", "код"]);
-
-const WALL_ROOTS: WallRoot[] = [
-  wallRoot("hec kime deme", "pressure", "normal"),
-  wallRoot("enable content", "malware", "strong"),
-  wallRoot("fayli ac", "malware", "strong"),
-  wallRoot("senedi yukle", "malware", "strong"),
-  wallRoot("it support", "impersonation", "normal"),
-  wallRoot("paylasacam", "blackmail", "strong"),
-  wallRoot("yayacam", "blackmail", "strong"),
-  wallRoot("blackmail", "blackmail", "strong"),
-  wallRoot("compromise", "blackmail", "strong"),
-  wallRoot("instagram", "blackmail", "channel"),
-  wallRoot("telegram", "blackmail", "channel"),
-  wallRoot("whatsapp", "blackmail", "channel"),
-  wallRoot("immediately", "pressure", "normal"),
-  wallRoot("shantaj", "blackmail", "strong"),
-  wallRoot("santaj", "blackmail", "strong"),
-  wallRoot("webcam", "blackmail", "strong"),
-  wallRoot("expose", "blackmail", "strong"),
-  wallRoot("goruntu", "blackmail", "media"),
-  wallRoot("ifsaa", "blackmail", "strong"),
-  wallRoot("biabir", "blackmail", "strong"),
-  wallRoot("invoice", "money", "normal"),
-  wallRoot("faktura", "money", "normal"),
-  wallRoot("attachment", "malware", "weak"),
-  wallRoot("download", "malware", "weak"),
-  wallRoot("direktor", "impersonation", "normal"),
-  wallRoot("password", "credential", "strong"),
-  wallRoot("suspend", "credential", "paired"),
-  wallRoot("serefsiz", "pressure", "normal"),
-  wallRoot("mehkeme", "impersonation", "normal"),
-  wallRoot("whatsapp", "blackmail", "channel"),
-  wallRoot("tiktok", "blackmail", "channel"),
-  wallRoot("account", "money", "normal"),
-  wallRoot("transfer", "money", "normal"),
-  wallRoot("odenis", "money", "normal"),
-  wallRoot("rehber", "impersonation", "normal"),
-  wallRoot("verify", "credential", "paired"),
-  wallRoot("login", "credential", "paired"),
-  wallRoot("reset", "credential", "paired"),
-  wallRoot("urgent", "pressure", "normal"),
-  wallRoot("please", "pressure", "normal"),
-  wallRoot("gonder", "money", "normal"),
-  wallRoot("dollar", "money", "normal"),
-  wallRoot("manat", "money", "normal"),
-  wallRoot("money", "money", "normal"),
-  wallRoot("nude", "blackmail", "strong"),
-  wallRoot("photo", "blackmail", "media"),
-  wallRoot("sekil", "blackmail", "media"),
-  wallRoot("share", "blackmail", "channel"),
-  wallRoot("leak", "blackmail", "strong"),
-  wallRoot("ifsa", "blackmail", "strong"),
-  wallRoot("video", "blackmail", "media"),
-  wallRoot("macro", "malware", "strong"),
-  wallRoot("quick", "pressure", "normal"),
-  wallRoot("gizli", "pressure", "normal"),
-  wallRoot("derhal", "pressure", "normal"),
-  wallRoot("tecili", "pressure", "normal"),
-  wallRoot("cerime", "pressure", "normal"),
-  wallRoot("hebs", "pressure", "normal"),
-  wallRoot("vergi", "impersonation", "normal"),
-  wallRoot("polis", "impersonation", "normal"),
-  wallRoot("admin", "impersonation", "normal"),
-  wallRoot("kocur", "money", "normal"),
-  wallRoot("hesab", "money", "normal"),
-  wallRoot("kart", "money", "normal"),
-  wallRoot("bank", "money", "normal"),
-  wallRoot("send", "money", "normal"),
-  wallRoot("cash", "money", "normal"),
-  wallRoot("wire", "money", "normal"),
-  wallRoot("para", "money", "normal"),
-  wallRoot("iban", "money", "normal"),
-  wallRoot("sifre", "credential", "strong"),
-  wallRoot("parol", "credential", "strong"),
-  wallRoot("blok", "credential", "paired"),
-  wallRoot("asap", "pressure", "normal"),
-  wallRoot("now", "pressure", "normal", false),
-  wallRoot("pls", "pressure", "normal", false),
-  wallRoot("tez", "pressure", "normal", true),
-  wallRoot("pul", "money", "normal", true),
-  wallRoot("pay", "money", "normal", true),
-  wallRoot("kod", "credential", "strong", true),
-  wallRoot("otp", "credential", "strong", true),
-  wallRoot("pin", "credential", "strong", true),
-  wallRoot("cvv", "credential", "strong", false),
-  wallRoot("azn", "money", "normal", false),
-  wallRoot("usd", "money", "normal", false),
-  wallRoot("ceo", "impersonation", "normal", false),
-  wallRoot("hr", "impersonation", "normal", false),
-  wallRoot("шантаж", "blackmail", "strong"),
-  wallRoot("разошлю", "blackmail", "strong"),
-  wallRoot("видео", "blackmail", "media"),
-  wallRoot("слив", "blackmail", "strong"),
-  wallRoot("деньги", "money", "normal"),
-  wallRoot("перевод", "money", "normal"),
-  wallRoot("карт", "money", "normal"),
-  wallRoot("счет", "money", "normal"),
-  wallRoot("счёт", "money", "normal"),
-  wallRoot("пароль", "credential", "strong"),
-  wallRoot("срочно", "pressure", "normal"),
-  wallRoot("acil", "pressure", "normal"),
-  wallRoot("hemen", "pressure", "normal"),
-  wallRoot("код", "credential", "strong", true),
-].map((item) => (SHORT_PREFIX.has(item.root) ? { ...item, prefix: true } : item));
-
-function overlaps(taken: { start: number; end: number }[], start: number, end: number): boolean {
-  return taken.some((span) => start < span.end && end > span.start);
-}
-
-function scanRoots(text: string, roots: WallRoot[]): WallHit[] {
-  const ordered = [...roots].sort((left, right) => right.root.length - left.root.length);
-  const taken: { start: number; end: number }[] = [];
-  const hits: WallHit[] = [];
-  for (const item of ordered) {
-    let from = 0;
-    while (from < text.length) {
-      const index = text.indexOf(item.root, from);
-      if (index < 0) break;
-      const before = text[index - 1];
-      const after = text[index + item.root.length];
-      const word = text.slice(index, wordEnd(text, index));
-      const end = item.prefix && isLetter(after) ? wordEnd(text, index) : index + item.root.length;
-      const sender = item.root === "gonder" && (word.startsWith("gonderici") || word.startsWith("gonderen"));
-      const allowed = !isLetter(before) && (item.prefix || !isLetter(after)) && !(item.root === "hesab" && word.startsWith("hesabat")) && !sender;
-      if (allowed && !overlaps(taken, index, end)) {
-        taken.push({ start: index, end });
-        hits.push({ kind: item.kind, role: item.role, start: index, end, root: item.root });
-      }
-      from = index + Math.max(1, item.root.length);
-    }
-  }
-  return hits;
-}
-
-function scanExtensions(text: string): WallHit[] {
-  const hits: WallHit[] = [];
-  for (const match of text.matchAll(/\.(?:exe|scr|bat|vbs|apk)(?!\p{L})/giu)) {
-    if (match.index === undefined) continue;
-    hits.push({
-      kind: "malware",
-      role: "strong",
-      start: match.index,
-      end: match.index + match[0].length,
-      root: match[0].toLowerCase(),
-    });
-  }
-  return hits;
-}
-
-function assessCyberWall(text: string, markers: Marker[]) {
-  const hits = [...scanExtensions(text), ...scanRoots(text, WALL_ROOTS)];
-  const count = (kind: WallKind, role?: WallRole) => hits.filter((hit) => hit.kind === kind && (role === undefined || hit.role === role)).length;
-  const amount = markers.some((marker) => marker.label === "məbləğ və valyuta");
-  const card = markers.some((marker) => marker.label === "bank kartı nömrəsi" || marker.label === "IBAN");
-  const otpMarker = markers.some((marker) => marker.label === "OTP kod tələbi");
-  const blackmail = count("blackmail");
-  const money = count("money");
-  const pressure = count("pressure");
-  const impersonation = count("impersonation");
-  const strongBlackmail = count("blackmail", "strong");
-  const media = count("blackmail", "media");
-  const channel = count("blackmail", "channel");
-  const strongCredential = count("credential", "strong");
-  const pairedCredential = count("credential", "paired");
-  const malwareStrong = count("malware", "strong");
-  const malwareWeak = count("malware", "weak");
-  const blackmailHard = strongBlackmail > 0 || (media > 0 && channel > 0);
-  const moneyHard = card || money >= 2 || (money >= 1 && (amount || pressure >= 1)) || (amount && pressure >= 1);
-  const credentialHard = strongCredential > 0 || otpMarker || (pairedCredential > 0 && (pressure >= 1 || pairedCredential >= 2));
-  const malwareHard = malwareStrong > 0 || (malwareWeak >= 2) || (malwareWeak > 0 && (pressure >= 1 || moneyHard || credentialHard || blackmailHard));
-  const forced = blackmailHard || moneyHard || credentialHard || malwareHard;
-  const impersonationActive = impersonation >= 2 || (impersonation >= 1 && (forced || pressure >= 1));
-  const showPressure = pressure >= 1 && (forced || impersonationActive || pressure >= 2);
-  const intents: string[] = [];
-  if (blackmailHard) intents.push("Şantaj, hədə və məxfilik pozuntusu niyyəti aşkarlandı");
-  if (moneyHard) intents.push("Maliyyə / Kart Köçürmə Tələbi Niyyəti Aşkarlandı");
-  if (credentialHard) intents.push("Məlumat və OTP oğurluğu niyyəti aşkarlandı");
-  if (malwareHard) intents.push("Zərərli fayl və texniki tələ niyyəti aşkarlandı");
-  if (impersonationActive) intents.push("Rəhbər və ya qurum təqlidi niyyəti aşkarlandı");
-  if (showPressure) intents.push("Tələskənlik, təzyiq və aqressiya niyyəti aşkarlandı");
-  const visible = new Set<WallKind>();
-  if (blackmailHard) visible.add("blackmail");
-  if (moneyHard || forced) visible.add("money");
-  if (credentialHard || forced) visible.add("credential");
-  if (malwareHard) visible.add("malware");
-  if (impersonationActive) visible.add("impersonation");
-  if (showPressure || forced) visible.add("pressure");
-  if (!forced && !impersonationActive) visible.clear();
-  const spans = hits.filter((hit) => visible.has(hit.kind)).map((hit) => ({ start: hit.start, end: hit.end }));
-  const labels = hits.filter((hit) => visible.has(hit.kind)).map((hit) => hit.root);
-  const techniques: AttackTechnique[] = [];
-  if (blackmailHard || impersonationActive) techniques.push({ code: "T1656", name: "Impersonation" });
-  if (moneyHard || credentialHard) techniques.push({ code: "T1566", name: "Phishing" });
-  if (malwareHard) techniques.push({ code: "T1204.002", name: "Malicious File" });
-  let floor = 0;
-  if (forced) {
-    const weight = blackmail * 4 + money * 3 + (strongCredential + pairedCredential) * 3 + pressure * 2 + (amount || card ? 5 : 0) + (malwareHard ? 4 : 0);
-    floor = Math.min(98, 84 + Math.min(14, weight));
-  }
-  return { floor, forced, intents, spans, labels, techniques, pressure, impersonationActive, malwareHard };
-}
-
-function buildHighlights(text: string, markers: Marker[], extra: { start: number; end: number }[] = []): TextPart[] {
-  const spans = [
-    ...findHits(text).map((hit) => ({ start: hit.start, end: hit.end })),
-    ...markers.map((marker) => ({ start: marker.start, end: marker.end })),
-    ...extra,
-  ].sort((left, right) => left.start - right.start || right.end - left.end);
-  const merged: { start: number; end: number }[] = [];
-  for (const span of spans) {
-    const last = merged[merged.length - 1];
-    if (!last || span.start > last.end) merged.push({ start: span.start, end: span.end });
-    else last.end = Math.max(last.end, span.end);
-  }
-  if (merged.length === 0) return [{ text, hit: false }];
-  const parts: TextPart[] = [];
-  let cursor = 0;
-  for (const span of merged) {
-    if (span.start > cursor) parts.push({ text: text.slice(cursor, span.start), hit: false });
-    parts.push({ text: text.slice(span.start, span.end), hit: true });
-    cursor = span.end;
-  }
-  if (cursor < text.length) parts.push({ text: text.slice(cursor), hit: false });
-  return parts;
-}
-
-type LureKind = "crypto" | "recruit" | "deletion";
-
-interface LureRoot {
-  phrase: string;
-  kind: LureKind;
-  label: string;
-}
-
-const LURE_ROOTS: LureRoot[] = [
-  { phrase: "pul yatir", kind: "crypto", label: "pul yatır" },
-  { phrase: "delete account", kind: "deletion", label: "delete account" },
-  { phrase: "ish teklifi", kind: "recruit", label: "iş təklifi" },
-  { phrase: "is teklifi", kind: "recruit", label: "iş təklifi" },
-  { phrase: "cv gonder", kind: "recruit", label: "CV göndər" },
-  { phrase: "bitcoin", kind: "crypto", label: "bitcoin" },
-  { phrase: "crypto", kind: "crypto", label: "crypto" },
-  { phrase: "invest", kind: "crypto", label: "invest" },
-  { phrase: "qazanc", kind: "crypto", label: "qazanc" },
-  { phrase: "bonus", kind: "crypto", label: "bonus" },
-  { phrase: "silinecek", kind: "deletion", label: "silinəcək" },
-  { phrase: "baglanacaq", kind: "deletion", label: "bağlanacaq" },
-  { phrase: "deaktiv", kind: "deletion", label: "deaktiv" },
-  { phrase: "terminate", kind: "deletion", label: "terminate" },
-  { phrase: "vakansiya", kind: "recruit", label: "vakansiya" },
-  { phrase: "interview", kind: "recruit", label: "interview" },
-  { phrase: "salary", kind: "recruit", label: "salary" },
-];
-
-function lureEnd(text: string, index: number, phrase: string): number | null {
-  if (!text.startsWith(phrase, index)) return null;
-  if (index > 0 && isLetter(text[index - 1])) return null;
-  if (phrase === "invest" && !investWord(text.slice(index, wordEnd(text, index)))) return null;
-  const base = index + phrase.length;
-  return isLetter(text[base]) ? wordEnd(text, base) : base;
-}
-
-function assessLures(text: string) {
-  const ordered = [...LURE_ROOTS].sort((left, right) => right.phrase.length - left.phrase.length);
-  const taken: { start: number; end: number }[] = [];
-  const hits: { kind: LureKind; label: string; phrase: string; start: number; end: number }[] = [];
-  for (const item of ordered) {
-    let from = 0;
-    while (from < text.length) {
-      const index = text.indexOf(item.phrase, from);
-      if (index < 0) break;
-      const end = lureEnd(text, index, item.phrase);
-      if (end !== null && !overlaps(taken, index, end)) {
-        taken.push({ start: index, end });
-        hits.push({ kind: item.kind, label: item.label, phrase: item.phrase, start: index, end });
-      }
-      from = index + Math.max(1, item.phrase.length);
-    }
-  }
-  const phrases = new Set(hits.map((hit) => hit.phrase));
-  const kinds = new Set(hits.map((hit) => hit.kind));
-  const cryptoStrong = ["bitcoin", "crypto", "pul yatir", "qazanc", "invest"].filter((phrase) => phrases.has(phrase)).length;
-  const recruitStrong = ["vakansiya", "ish teklifi", "is teklifi", "cv gonder"].filter((phrase) => phrases.has(phrase)).length;
-  const recruitWeak = ["interview", "salary"].filter((phrase) => phrases.has(phrase)).length;
-  let floor = 0;
-  if (cryptoStrong >= 2 || (cryptoStrong >= 1 && phrases.has("bonus"))) floor = 90;
-  else if (cryptoStrong === 1) floor = 78;
-  else if (phrases.has("bonus")) floor = 54;
-  if (kinds.has("deletion")) floor = Math.max(floor, 88);
-  if (recruitStrong >= 2 || phrases.has("cv gonder") || phrases.has("ish teklifi") || phrases.has("is teklifi")) floor = Math.max(floor, 86);
-  else if (recruitStrong === 1) floor = Math.max(floor, 74);
-  else if (recruitWeak >= 2) floor = Math.max(floor, 80);
-  else if (recruitWeak === 1) floor = Math.max(floor, 58);
-  if (kinds.size >= 2) floor = Math.max(floor, 90);
-  const intents: string[] = [];
-  if (kinds.has("crypto")) intents.push("Kripto, maliyyə piramidası və investisiya tələsi niyyəti aşkarlandı");
-  if (kinds.has("recruit")) intents.push("Saxta iş təklifi və CV tələsi niyyəti aşkarlandı");
-  if (kinds.has("deletion")) intents.push("Hədə-qorxu və hesabın silinməsi niyyəti aşkarlandı");
-  const techniques: AttackTechnique[] = [];
-  if (kinds.has("crypto")) techniques.push({ code: "T1204", name: "User Execution" });
-  if (kinds.has("crypto") && cryptoStrong >= 1) techniques.push({ code: "T1566", name: "Phishing" });
-  if (kinds.has("recruit")) {
-    techniques.push({ code: "T1566", name: "Phishing" });
-    techniques.push({ code: "T1204", name: "User Execution" });
-  }
-  if (kinds.has("deletion")) {
-    techniques.push({ code: "T1534", name: "Internal Spearphishing" });
-    techniques.push({ code: "T1566", name: "Phishing" });
-  }
-  return {
-    floor,
-    intents,
-    techniques,
-    spans: hits.map((hit) => ({ start: hit.start, end: hit.end })),
-    labels: [...new Set(hits.map((hit) => hit.label))],
-  };
-}
-
 const LEET: Record<string, string> = { "3": "e", "0": "o", "1": "i", "@": "a" };
 const EVASIVE_PUNCT = /[.,_*/-]/;
 
@@ -1055,7 +646,7 @@ interface CleanChar {
   from: number;
 }
 
-function deobfuscate(raw: string): { text: string; origins: number[]; obfuscated: boolean } {
+export function deobfuscate(raw: string): { text: string; origins: number[]; obfuscated: boolean } {
   const normalized = normalizeText(raw);
   const kept: CleanChar[] = [];
   let obfuscated = false;
@@ -1133,360 +724,49 @@ function deobfuscate(raw: string): { text: string; origins: number[]; obfuscated
   };
 }
 
-type VectorId = "V1" | "V2" | "V3" | "V4";
+const VECTOR_META = {
+  V1: { name: "Financial/Crypto Request", base: 40 },
+  V2: { name: "Urgency/Coercion", base: 30 },
+  V3: { name: "Credential Theft/Action", base: 40 },
+  V4: { name: "Authority/Impersonation", base: 20 },
+} as const;
 
-interface IntentTerm {
-  vector: VectorId;
-  term: string;
-  label: string;
-}
-
-const INTENT_TERMS: IntentTerm[] = [
-  { vector: "V1", term: "bitcoin", label: "bitcoin" },
-  { vector: "V1", term: "crypto", label: "crypto" },
-  { vector: "V1", term: "transfer", label: "transfer" },
-  { vector: "V1", term: "usdt", label: "usdt" },
-  { vector: "V1", term: "qazanc", label: "qazanc" },
-  { vector: "V1", term: "invest", label: "invest" },
-  { vector: "V1", term: "kocur", label: "köçürmə" },
-  { vector: "V1", term: "gonder", label: "göndər" },
-  { vector: "V1", term: "odenis", label: "ödəniş" },
-  { vector: "V1", term: "money", label: "money" },
-  { vector: "V1", term: "wire", label: "wire" },
-  { vector: "V1", term: "kart", label: "kart" },
-  { vector: "V1", term: "hesab", label: "hesab" },
-  { vector: "V1", term: "pul", label: "pul" },
-  { vector: "V1", term: "btc", label: "btc" },
-  { vector: "V2", term: "immediately", label: "immediately" },
-  { vector: "V2", term: "gecikmeden", label: "gecikmədən" },
-  { vector: "V2", term: "blackmail", label: "blackmail" },
-  { vector: "V2", term: "deadline", label: "deadline" },
-  { vector: "V2", term: "shantaj", label: "şantaj" },
-  { vector: "V2", term: "santaj", label: "şantaj" },
-  { vector: "V2", term: "urgent", label: "urgent" },
-  { vector: "V2", term: "tecili", label: "təcili" },
-  { vector: "V2", term: "derhal", label: "dərhal" },
-  { vector: "V2", term: "nude", label: "nude" },
-  { vector: "V2", term: "ifsa", label: "ifşa" },
-  { vector: "V2", term: "asap", label: "asap" },
-  { vector: "V2", term: "tez", label: "tez" },
-  { vector: "V3", term: "password", label: "password" },
-  { vector: "V3", term: "tesdiq", label: "təsdiqlə" },
-  { vector: "V3", term: "verify", label: "verify" },
-  { vector: "V3", term: "klikle", label: "kliklə" },
-  { vector: "V3", term: "login", label: "login" },
-  { vector: "V3", term: "sifre", label: "şifrə" },
-  { vector: "V3", term: "parol", label: "parol" },
-  { vector: "V3", term: "klik", label: "klik" },
-  { vector: "V3", term: "otp", label: "otp" },
-  { vector: "V4", term: "direktor", label: "direktor" },
-  { vector: "V4", term: "rehber", label: "rəhbər" },
-  { vector: "V4", term: "admin", label: "admin" },
-  { vector: "V4", term: "vergi", label: "vergi" },
-  { vector: "V4", term: "polis", label: "polis" },
-  { vector: "V4", term: "ceo", label: "ceo" },
-];
-
-const VECTOR_META: Record<VectorId, { name: string; base: number; code: string; technique: string }> = {
-  V1: { name: "Financial/Crypto Request", base: 40, code: "T1566.002", technique: "Spearphishing Link" },
-  V2: { name: "Urgency/Coercion", base: 30, code: "T1204", technique: "User Execution" },
-  V3: { name: "Credential Theft/Action", base: 40, code: "T1566.002", technique: "Spearphishing Link" },
-  V4: { name: "Authority/Impersonation", base: 20, code: "T1534", technique: "Internal Spearphishing" },
-};
-
-const BLACKMAIL_TERMS = new Set(["santaj", "shantaj", "ifsa", "nude", "blackmail"]);
-
-function termHits(text: string, origins: number[], term: string): { start: number; end: number }[] {
+function evidenceHighlights(text: string, phrases: string[]): TextPart[] {
+  const folded = normalizeText(text);
   const spans: { start: number; end: number }[] = [];
-  let from = 0;
-  while (from < text.length) {
-    const index = text.indexOf(term, from);
-    if (index < 0) break;
-    const before = text[index - 1];
-    const after = text[index + term.length];
-    const word = text.slice(index, wordEnd(text, index));
-    const prefix = term.length >= 4 || term === "pul" || term === "tez";
-    const sender = term === "gonder" && (word.startsWith("gonderici") || word.startsWith("gonderen"));
-    const allowed = !isLetter(before) && (prefix || !isLetter(after)) && !(term === "hesab" && word.startsWith("hesabat")) && !(term === "invest" && !investWord(word)) && !sender;
-    if (allowed) {
-      const originStart = origins[index];
-      const originEnd = origins[index + term.length - 1];
-      if (originStart !== undefined && originEnd !== undefined) spans.push({ start: originStart, end: originEnd + 1 });
+  for (const phrase of phrases) {
+    const needle = normalizeText(phrase);
+    if (needle.length < 2) continue;
+    let from = 0;
+    while (from < folded.length) {
+      const index = folded.indexOf(needle, from);
+      if (index < 0) break;
+      spans.push({ start: index, end: index + needle.length });
+      from = index + needle.length;
     }
-    from = index + Math.max(1, term.length);
   }
-  return spans;
-}
-
-function assessIntent(raw: string, hasUrl: boolean) {
-  const cleaned = deobfuscate(raw);
-  const grouped: Record<VectorId, { labels: string[]; spans: { start: number; end: number }[]; blackmail: number }> = {
-    V1: { labels: [], spans: [], blackmail: 0 },
-    V2: { labels: [], spans: [], blackmail: 0 },
-    V3: { labels: [], spans: [], blackmail: 0 },
-    V4: { labels: [], spans: [], blackmail: 0 },
-  };
-  for (const item of INTENT_TERMS) {
-    const spans = termHits(cleaned.text, cleaned.origins, item.term);
-    if (spans.length === 0) continue;
-    const bucket = grouped[item.vector];
-    if (!bucket.labels.includes(item.label)) bucket.labels.push(item.label);
-    bucket.spans.push(spans[0]);
-    if (BLACKMAIL_TERMS.has(item.term)) bucket.blackmail += 1;
+  spans.sort((left, right) => left.start - right.start || right.end - left.end);
+  const merged: { start: number; end: number }[] = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (!last || span.start > last.end) merged.push({ start: span.start, end: span.end });
+    else last.end = Math.max(last.end, span.end);
   }
-  const scoreOf = (id: VectorId) => {
-    const count = grouped[id].labels.length;
-    if (count === 0) return 0;
-    return clamp(VECTOR_META[id].base + (count - 1) * 22);
-  };
-  const v1 = scoreOf("V1");
-  const v2 = scoreOf("V2");
-  const v3 = scoreOf("V3");
-  const v4 = scoreOf("V4");
-  const blackmailScore = grouped.V2.blackmail === 0 ? 0 : clamp(30 + (grouped.V2.blackmail - 1) * 32);
-  const active = [v1, v2, v3, v4].filter((score) => score > 0);
-  const financialPair = v2 > 0 && v1 > 0;
-  const credentialPair = v2 > 0 && v3 > 0;
-  const synergy = financialPair || credentialPair;
-  let semantic = 0;
-  let formula = "";
-  if (synergy) {
-    const paired = (v1 > 0 ? v1 : 0) + (v3 > 0 ? v3 : 0);
-    semantic = paired + v2 * 1.5 + (v4 > 0 ? v4 * 0.5 : 0);
-    formula = `${v1 > 0 ? `V1 ${v1}` : ""}${v1 > 0 && v3 > 0 ? " + " : ""}${v3 > 0 ? `V3 ${v3}` : ""} + V2 ${v2} × 1.5`;
-    if (v4 > 0) formula += ` + V4 ${v4} × 0.5`;
-  } else if (active.length >= 2) {
-    semantic = (v1 + v2 + v3 + v4) * 0.9;
-    formula = `V1 ${v1} + V2 ${v2} + V3 ${v3} + V4 ${v4}`;
-  } else if (active.length === 1) {
-    const onlyId = (["V1", "V2", "V3", "V4"] as VectorId[]).find((id) => scoreOf(id) > 0);
-    const count = onlyId ? grouped[onlyId].labels.length : 0;
-    semantic = count >= 2 ? active[0] : Math.min(12, Math.round(active[0] * 0.25));
-    formula = count >= 2 ? `${onlyId} ${active[0]}` : `${onlyId} tək söz, çarpan yoxdur`;
+  if (merged.length === 0) return [{ text, hit: false }];
+  const parts: TextPart[] = [];
+  let cursor = 0;
+  for (const span of merged) {
+    if (span.start > cursor) parts.push({ text: text.slice(cursor, span.start), hit: false });
+    parts.push({ text: text.slice(span.start, span.end), hit: true });
+    cursor = span.end;
   }
-  semantic = clamp(Math.round(semantic));
-  const payloadCarrier = hasUrl && (v1 > 60 || blackmailScore > 60);
-  if (payloadCarrier) semantic = clamp(Math.max(semantic, 85));
-  const vectors: IntentVector[] = (["V1", "V2", "V3", "V4"] as VectorId[]).map((id) => ({
-    id,
-    name: VECTOR_META[id].name,
-    score: scoreOf(id),
-    base: VECTOR_META[id].base,
-    terms: grouped[id].labels,
-  }));
-  const expose = synergy || payloadCarrier || active.length >= 2 || (active.length === 1 && grouped[(["V1", "V2", "V3", "V4"] as VectorId[]).find((id) => scoreOf(id) > 0) ?? "V1"].labels.length >= 2);
-  const reasoning = [
-    cleaned.obfuscated
-      ? "Addım 1: Mətndəki gizlədilmiş hərflər (obfuscation) və Leetspeak təmizləndi."
-      : "Addım 1: Mətn diakritik və böyük-kiçik hərf fərqi nəzərə alınaraq normallaşdırıldı. Yayınma izi tapılmadı.",
-    financialPair
-      ? "Addım 2: Yüksək tələskənlik (Urgency) və maliyyə tələbi (Financial Intent) arasında korrelyasiya aşkarlandı."
-      : credentialPair
-        ? "Addım 2: Yüksək tələskənlik (Urgency) və şifrə tələbi (Credential Intent) arasında korrelyasiya aşkarlandı."
-        : "Addım 2: Təhdid vektorları ayrı-ayrı ölçüldü. Tələskənlik ilə maliyyə və ya şifrə tələbi arasında sinerji yoxdur.",
-    synergy && v4 > 0
-      ? `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}. CEO fraud (Rəhbər təqlidi) taktikası tətbiq olunur.`
-      : synergy
-        ? `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}.`
-        : active.length === 0
-          ? "Addım 3: Kontekstual niyyət matrisi boşdur. Ümumi risk aşağı saxlanıldı."
-          : `Addım 3: Sinergetik Təhdid İndeksi hesablandı: ${formula}. Tək vektor kritik həddə çatdırılmadı.`,
-  ];
-  if (payloadCarrier) {
-    reasoning.push("Addım 4: Keçid Zero-Trust yoxlamasından keçmədi. Niyyət 60%-i keçdiyi üçün məktub, domen təmiz olsa belə, Zərərli Payload Daşıyıcısı kimi 85%+ risk aldı.");
-  }
-  const techniques: AttackTechnique[] = [];
-  for (const vector of vectors) {
-    if (vector.score === 0 || !expose) continue;
-    const meta = VECTOR_META[vector.id];
-    const existing = techniques.find((item) => item.code === meta.code);
-    const label = `${vector.id} ${meta.technique}`;
-    if (!existing) techniques.push({ code: meta.code, name: label });
-    else if (!existing.name.includes(vector.id)) existing.name = `${existing.name} · ${label}`;
-  }
-  return {
-    vectors,
-    reasoning,
-    overall: semantic,
-    payloadCarrier,
-    obfuscated: cleaned.obfuscated,
-    synergy,
-    spans: expose ? (["V1", "V2", "V3", "V4"] as VectorId[]).flatMap((id) => grouped[id].spans) : [],
-    labels: expose ? (["V1", "V2", "V3", "V4"] as VectorId[]).flatMap((id) => grouped[id].labels) : [],
-    techniques,
-  };
-}
-
-function plain(value: string): string {
-  return normalizeText(value).replace(/['’`]/g, "");
-}
-
-function splitSentences(text: string): string[] {
-  const parts = text
-    .split(/\n+|(?<=[.!?])\s+/u)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.length > 0 ? parts : [text.trim()].filter(Boolean);
-}
-
-const WARNING_PHRASES = [
-  "paylasmayin",
-  "vermeyin",
-  "gondermeyin",
-  "teleb etmir",
-  "teleb etmeyecek",
-  "teleb etmez",
-  "teleb olunmur",
-  "daxil olmayin",
-  "acmayin",
-  "yoxlayin",
-  "bildirin",
-  "qoruyun",
-  "do not share",
-  "dont share",
-  "never ask",
-  "never share",
-  "do not open",
-  "do not click",
-  "do not run",
-  "dont open",
-  "dont click",
-  "never open",
-  "ise salmayin",
-  "не передавайте",
-  "не сообщайте",
-  "не открывайте",
-  "не переходите",
-  "не вводите",
-];
-
-function hasWarning(sentence: string): boolean {
-  const folded = plain(sentence);
-  const raw = sentence.toLowerCase();
-  return WARNING_PHRASES.some((phrase) => folded.includes(phrase) || raw.includes(phrase));
-}
-
-function hasPositiveDemand(folded: string): boolean {
-  const run = /\brun\b/.test(folded) && !/\b(?:do not|dont|never) run\b/.test(folded);
-  return run || /teqdim edin|gonderin|daxil edin|tesdiqleyin|ise salin|yenileyin|enter your|send your|send the|confirm your|verify your/.test(folded);
-}
-
-function hasSecret(folded: string): boolean {
-  return /parol|sifre|password|otp|\bfin\b|\bpin\b|парол|login/.test(folded);
-}
-
-function hasPressureText(folded: string): boolean {
-  return /blok|baglan|derhal|tecili|urgent|immediately|asap|eks halda|suspend|hebs|cerime|deadline|немедленно|срочно|заблок/.test(folded);
-}
-
-function hasAmountText(text: string): boolean {
-  return /\d[\d\s.,]{0,12}(?:azn|usd|eur|rub|manat|dollar|tl)\b/.test(plain(text)) || /[$€]\s?\d/.test(text);
-}
-
-function isDefenseText(folded: string): boolean {
-  return /sondur|dayandir|disable|turn off|switch off|deaktiv edin/.test(folded) && /antivirus|defender|mudafie|protection/.test(folded);
-}
-
-function hasExecDemand(folded: string): boolean {
-  const extension = /\.(?:exe|scr|bat|vbs)\b/.test(folded);
-  const run = /ise salin|icra edin/.test(folded) || (/\brun\b/.test(folded) && !/\b(?:do not|dont|never) run\b/.test(folded));
-  return extension && run;
-}
-
-function isThreatSentence(sentence: string): boolean {
-  const folded = plain(sentence);
-  if (isDefenseText(folded) || hasExecDemand(folded)) return true;
-  if (hasWarning(sentence) && !hasPositiveDemand(folded)) return false;
-  if (hasPositiveDemand(folded) && hasSecret(folded)) return true;
-  if (hasAmountText(sentence) && /kocur|wire|odenis|havale|transfer|invoice|faktura|перевод/.test(folded)) return true;
-  if (hasPositiveDemand(folded) && hasPressureText(folded)) return true;
-  return false;
-}
-
-interface Discourse {
-  awarenessOnly: boolean;
-  fileAdvisory: boolean;
-  defense: boolean;
-  execution: boolean;
-  credentialDemand: boolean;
-  financial: boolean;
-  card: boolean;
-  oauth: boolean;
-  pressure: boolean;
-  official: boolean;
-}
-
-function assessDiscourse(text: string, markers: Marker[]): Discourse {
-  const roles = splitSentences(text).map((sentence) => (isThreatSentence(sentence) ? "threat" : hasWarning(sentence) ? "awareness" : "neutral"));
-  const awarenessOnly = roles.some((role) => role === "awareness") && roles.every((role) => role !== "threat");
-  const folded = plain(text);
-  const decoded = plain(deobfuscate(text).text);
-  const fileAdvisory = awarenessOnly && /\bpdf\b|\bzip\b|\.pdf\b|\.zip\b/.test(folded);
-  const defense = !awarenessOnly && isDefenseText(folded);
-  const execution =
-    !awarenessOnly &&
-    (hasExecDemand(folded) ||
-      (defense && /\.(?:exe|scr|bat|vbs)\b/.test(folded)) ||
-      (/\.(?:exe|scr|bat|vbs)\b/.test(folded) && /yukleyin|download|fayli ac|open the/.test(folded)));
-  const credentialDemand =
-    !awarenessOnly && (markers.some((marker) => marker.label === "OTP kod tələbi") || (hasSecret(folded) && hasPositiveDemand(folded)));
-  const financial =
-    !awarenessOnly &&
-    (markers.some((marker) => marker.label === "məbləğ və valyuta" || marker.label === "IBAN") ||
-      hasAmountText(text) ||
-      /iban|yeni hesab|hesab nomre|hesabimiz deyis|hesab deyis|\bkocur|wire|\bodenis|havale|invoice|faktura|перевод|\btransfer\b/.test(folded) ||
-      (/\bpul\b|bitcoin|crypto|qazanc|\bmoney\b/.test(decoded) && /gonder|\bkocur|\bwire\b|\btransfer\b|odenis|havale|\bsend\b/.test(decoded)));
-  const card =
-    !awarenessOnly &&
-    (markers.some((marker) => marker.label === "bank kartı nömrəsi") ||
-      /\bcvv\b/.test(folded) ||
-      /kart nom/.test(folded) ||
-      (/baglama|catdirilma|kuryer|delivery/.test(folded) && /odenis|rusum|komissiya/.test(folded) && hasPositiveDemand(folded)));
-  const oauth =
-    !awarenessOnly &&
-    !defense &&
-    !execution &&
-    !credentialDemand &&
-    /icaze|oauth|permission|grant access/.test(folded) &&
-    /epoct|e-poct|email|kontakt|contact|fayl|inbox|calendar|oxuma/.test(folded);
-  return {
-    awarenessOnly,
-    fileAdvisory,
-    defense,
-    execution,
-    credentialDemand,
-    financial,
-    card,
-    oauth,
-    pressure: hasPressureText(folded),
-    official: /hormetli hemkar|xahis olunur|daxili portal/.test(folded),
-  };
-}
-
-function blendScore(urgency: number, domain: number, style: number, theft: number): number {
-  return clamp(Math.round(urgency * 0.36 + domain * 0.3 + style * 0.16 + theft * 0.18));
-}
-
-function withVectorScores(vectors: IntentVector[], scores: Partial<Record<IntentVector["id"], number>>): IntentVector[] {
-  return vectors.map((vector) => ({ ...vector, score: scores[vector.id] ?? 0 }));
+  if (cursor < text.length) parts.push({ text: text.slice(cursor), hit: false });
+  return parts;
 }
 
 export function analyzePhishing(text: string, url: string, threshold = 65): PhishingReport {
-  const hits = findHits(text);
-  const signals = uniqueSignals(hits);
+  const action = classifyPhishingText(text);
   const markers = findMarkers(text);
-  const repeats = Math.max(0, hits.length - signals.length);
-
-  let urgency = signals.reduce((sum, signal) => sum + signal.urgency, 0) + repeats * 3;
-  let theft = signals.reduce((sum, signal) => sum + signal.theft, 0) + markers.reduce((sum, marker) => sum + marker.theft, 0);
-  let style = signals.reduce((sum, signal) => sum + signal.style, 0);
-  urgency = clamp(urgency);
-  theft = clamp(theft);
-
-  const folded = foldAz(text);
-  const extras = styleExtras(text, folded, urgency);
-  style = clamp(style + extras.score);
-
   const urls = collectUrls(text, url);
   const domainReports = urls.map((item) => analyzeDomain(item));
   const domain = domainReports.reduce(
@@ -1499,189 +779,111 @@ export function analyzePhishing(text: string, url: string, threshold = 65): Phis
       documentation: false,
     },
   );
-
-  let overall = urgency * 0.36 + domain.score * 0.3 + style * 0.16 + theft * 0.18;
-  if (urgency >= 45 && domain.score >= 40) overall += 10;
-  if (theft >= 28 && (urgency >= 24 || domain.score >= 40)) overall += 6;
-  if (markers.some((marker) => marker.label === "bank kartı nömrəsi" || marker.label === "IBAN")) overall += 8;
-  if (urgency < 12 && domain.score < 15 && theft < 12 && style < 18) overall = Math.min(overall, 8);
-  if (text.trim().length < 12 && domain.score >= 50) overall = Math.max(overall, domain.score * 0.8);
-  overall = clamp(Math.round(overall));
-
-  const intent = intentProfile(signals, markers);
-  const normalized = normalizeText(text);
-  const wall = assessCyberWall(normalized, markers);
-  const lure = assessLures(normalized);
-  if (intent.floor > 0 || wall.floor > 0 || lure.floor > 0) overall = clamp(Math.max(overall, intent.floor, wall.floor, lure.floor));
-  if (intent.floor >= 84 || wall.forced || lure.floor >= 84) {
-    urgency = clamp(Math.max(urgency, 64));
-    theft = clamp(Math.max(theft, 58));
-    if (intent.pressure >= 1 || wall.pressure >= 1) style = clamp(Math.max(style, 36));
-  }
-
-  const urlsPresent = urls.some((item) => item.trim().length > 0);
-  const semantic = assessIntent(text, urlsPresent);
-  overall = clamp(Math.max(overall, semantic.overall));
-  urgency = clamp(Math.max(urgency, semantic.vectors.find((vector) => vector.id === "V2")?.score ?? 0));
-  theft = clamp(Math.max(theft, semantic.vectors.find((vector) => vector.id === "V1")?.score ?? 0, semantic.vectors.find((vector) => vector.id === "V3")?.score ?? 0));
-  if (semantic.synergy) style = clamp(Math.max(style, 36));
-
-  const discourse = assessDiscourse(text, markers);
-  const maliciousFile = !discourse.awarenessOnly && (discourse.execution || domain.executable);
-  let domainScore = domain.score;
-  let vectors = semantic.vectors;
-  let reasoning = [...semantic.reasoning];
-  let payloadCarrier = semantic.payloadCarrier;
-  let override = "";
-
-  if (discourse.awarenessOnly && discourse.fileAdvisory) {
-    urgency = 22;
-    theft = 16;
-    style = 30;
-    domainScore = Math.min(domain.documentation ? 0 : domainScore, 8);
-    overall = blendScore(urgency, domainScore, style, theft);
-    payloadCarrier = false;
-    vectors = withVectorScores(vectors, { V2: urgency, V1: 8 });
-    reasoning = [
-      "Addım 1: Cümlə xəbərdarlıq kontekstindədir — Təhlükəsizlik Maarifləndirməsi.",
-      "Addım 2: PDF və ya ZIP sözü və «göndəricini yoxlayın» icra tələbi deyil. Oğurluq və tələskənlik balları artırılmadı.",
-      "Addım 3: Yekun risk 15-25% dəhlizində saxlanıldı. .exe, .scr, .bat və .vbs icrası bu profildən yüksəkdir.",
-    ];
-  } else if (discourse.awarenessOnly) {
-    urgency = 12;
-    theft = 8;
-    style = 12;
-    domainScore = domain.documentation ? 0 : Math.min(domainScore, 8);
-    overall = blendScore(urgency, domainScore, style, theft);
-    payloadCarrier = false;
-    vectors = withVectorScores(vectors, { V2: urgency, V1: 6 });
-    reasoning = [
-      "Addım 1: Cümlə inkar və qadağa kontekstindədir — Təhlükəsizlik Maarifləndirməsi (Security Awareness).",
-      "Addım 2: parol, OTP, keçid, fayl və ya kart sözü paylaşmayın, tələb etməyəcək, daxil olmayın və ya açmayın feilinin yanındadır. Məlumat oğurluğu və tələskənlik balları artırılmadı.",
-      "Addım 3: Eyni sözlər təqdim edin, göndərin, daxil edin və ya təsdiqləyin tələbi ilə, üstəlik bloklanma təzyiqi ilə gələrsə, risk 90%-dən yuxarı qalxır.",
-    ];
-  } else if (discourse.defense) {
-    urgency = clamp(Math.max(urgency, 90));
-    theft = clamp(Math.max(theft, 86));
-    style = clamp(Math.max(style, 60));
-    domainScore = clamp(Math.max(domainScore, 24));
-    overall = Math.min(99, Math.max(overall, 98));
-    override = "antivirusun söndürülməsi və ya müdafiənin müvəqqəti dayandırılması";
-    vectors = withVectorScores(vectors, { V1: Math.max(vectors.find((vector) => vector.id === "V1")?.score ?? 0, 36), V2: 92, V3: 24 });
-  } else if (maliciousFile) {
-    urgency = clamp(Math.max(urgency, 88));
-    theft = clamp(Math.max(theft, 80));
-    style = clamp(Math.max(style, 52));
-    domainScore = clamp(Math.max(domainScore, 28));
-    overall = Math.min(97, Math.max(overall, 96));
-    override = "icra olunan əlavə (.exe, .scr, .bat və ya .vbs) və işə salın / run tələbi";
-    vectors = withVectorScores(vectors, { V1: Math.max(vectors.find((vector) => vector.id === "V1")?.score ?? 0, 28), V2: 88, V3: 20 });
-  } else if (discourse.oauth && !discourse.financial && !discourse.card) {
-    urgency = 36;
-    theft = 40;
-    style = 22;
-    domainScore = Math.min(domainScore, 20);
-    overall = 52;
-    payloadCarrier = false;
-    override = "OAuth icazə sui-istifadəsi — əlavə yoxlama tələb olunur";
-    vectors = withVectorScores(vectors, { V2: 24, V3: 40 });
-    reasoning = [
-      "Addım 1: Tətbiq e-poçt, kontakt və ya fayllara oxuma icazəsi istəyir.",
-      "Addım 2: Niyyət sinfi OAuth Consent Abuse-dir. Bu, maliyyə köçürməsi və ya parol oğurluğu deyil.",
-      "Addım 3: Əlavə yoxlama tələb olunur. Risk 45-60% dəhlizində saxlanıldı.",
-    ];
-  } else if ((discourse.credentialDemand || discourse.card) && discourse.pressure && overall < 92) {
-    overall = 92;
-    override = "müsbət tələb (təqdim edin, göndərin, daxil edin, təsdiqləyin) və bloklanma təzyiqi";
-  } else if (discourse.financial && discourse.pressure && overall < 90) {
-    overall = 90;
-    override = "maliyyə köçürməsi və ya hesab dəyişikliyi tələbi ilə tələskənlik";
-  }
-
-  const classes: string[] = [];
-  if (!discourse.awarenessOnly && discourse.financial) classes.push("Financial / Invoice Fraud");
-  if (!discourse.awarenessOnly && discourse.credentialDemand) classes.push("Credential / OTP Theft");
-  if (!discourse.awarenessOnly && discourse.card) classes.push("Card Data Theft");
-  if (!discourse.awarenessOnly && (discourse.defense || maliciousFile)) classes.push("Malicious Execution & Defense Evasion");
-  if (discourse.oauth && !discourse.financial && !discourse.card && !discourse.credentialDemand) classes.push("OAuth Consent Abuse");
-  if (classes.length === 0 && (discourse.awarenessOnly || (discourse.official && overall < 20))) classes.push("Security Awareness / Safe Notice");
-
-  const narrative = discourse.awarenessOnly
-    ? []
-    : wall.intents.filter((item) => !item.startsWith("Maliyyə / Kart") && !item.startsWith("Məlumat və OTP"));
-  const reportIntents = [...new Set([...classes, ...narrative])];
-  if (classes.length > 0) reasoning.push(`Niyyət sinfi: ${classes.join("; ")}.`);
-
-  const weighted = blendScore(urgency, domainScore, style, theft);
-  reasoning.push(`Çəkili cəm: tələskənlik ${urgency}×0.36 + saxta domen ${domainScore}×0.30 + üslub ${style}×0.16 + məlumat oğurluğu ${theft}×0.18 = ${weighted}%.`);
-  if (!override && overall > weighted + 1) {
-    if (wall.forced) override = "Kiber Divar: pul, şəxsiyyət və ya şantaj tələbi kritik həddi keçir";
-    else if (semantic.synergy) override = "niyyət vektorlarının sinerjisi (V1/V3 + V2×1.5)";
-    else if (payloadCarrier) override = "zərərli payload daşıyıcısı";
-    else override = "aktiv heuristik hədd";
-  }
-  if (overall > weighted + 1) {
-    reasoning.push(`Kritik qayda (override): ${override}. Yekun risk ${overall}% çəkili cəmdən (${weighted}%) yüksəkdir, səbəbi bu qaydadır.`);
-  } else {
-    reasoning.push(`Yekun risk ${overall}% çəkili cəmlə uzlaşır.`);
-  }
-
+  const domainScore = domain.score;
   const line = Math.min(85, Math.max(50, Math.round(Number.isFinite(threshold) ? threshold : 65)));
-  const critical = overall >= 84;
-  const quarantine = overall >= line ? "alindi" : overall >= Math.max(35, line - 25) ? "nezaret" : "tehlukesiz";
-  const techniques: AttackTechnique[] = [];
-  const addTechnique = (code: string, name: string) => {
-    if (!techniques.some((item) => item.code === code)) techniques.push({ code, name });
-  };
-  if (!discourse.awarenessOnly) {
-    const linked = urlsPresent && domain.score >= 40 && !domain.documentation;
-    if (linked && (discourse.financial || discourse.credentialDemand || discourse.card || discourse.pressure || overall >= 70)) {
-      addTechnique("T1566.002", "Spearphishing Link");
-    }
-    if (maliciousFile || (discourse.defense && /\.(?:exe|scr|bat|vbs)\b/i.test(text)) || domain.executable) {
-      addTechnique("T1566.001", "Spearphishing Attachment");
-      addTechnique("T1204.002", "Malicious File");
-    }
-    if (discourse.defense) addTechnique("T1562.001", "Impair Defenses");
-    if (wall.impersonationActive && overall >= 70) addTechnique("T1656", "Impersonation");
-    if (discourse.oauth && !discourse.financial && !discourse.credentialDemand) addTechnique("T1528", "Steal Application Access Token");
-    if (/ransom|sifrelen|bitlocker|decrypt|fidye|fidya/.test(plain(text))) addTechnique("T1486", "Data Encrypted for Impact");
+  const weighted = Math.min(100, (action.v1 * 35 + action.v3 * 35 + action.v2 * 15 + action.v4 * 15 + domainScore * 30) / 100);
+  const basePercent = Math.min(100, Math.round(weighted));
+  let final = weighted;
+  const ruleA = action.v3 >= 70;
+  const ruleB = action.v1 >= 70 && (action.v2 >= 30 || action.v4 >= 20 || action.secrecy);
+  if (ruleA) final = Math.max(final, 92);
+  if (ruleB) final = Math.max(final, 94);
+  const noDemand = action.v1 < 40 && action.v3 < 40;
+  if (noDemand) final = Math.min(final, 25);
+  const overall = clamp(Math.round(final));
+
+  const obfuscationLabel = action.obfuscationQuotes.map((item) => `«${item}»`).join(", ");
+  const step1 = action.obfuscationQuotes.length > 0
+    ? `Addım 1 (Normallaşdırma): Mətndə yayınma/obfuscation aşkarlandı: ${obfuscationLabel}.`
+    : action.obfuscated
+      ? "Addım 1 (Normallaşdırma): Mətndə yayınma/obfuscation aşkarlandı."
+      : "Addım 1 (Normallaşdırma): Mətndə yayınma/obfuscation (p.u.l, h3sab) tapılmadı.";
+
+  const quotedContext = action.contextQuotes.map((item) => `«${item}»`).join(", ");
+  const demandQuote = action.demandQuotes[0] ?? "aktiv tələb";
+  const step2 = action.contextQuotes.length > 0 && !action.financial && !action.credential
+    ? `Addım 2 (Kontekst və İnkar): İnkar/neytral kontekst aşkarlandı: ${quotedContext}.`
+    : action.contextQuotes.length > 0
+      ? `Addım 2 (Kontekst və İnkar): İnkar/neytral kontekst aşkarlandı: ${quotedContext}. Aktiv tələb bu kontekstdən ayrıdır: «${demandQuote}».`
+      : action.financial || action.credential
+        ? `Addım 2 (Kontekst və İnkar): Aktiv tələb aşkarlandı: «${demandQuote}». İnkar və ya rəsmi prosedural kontekst bu tələbi örtmür.`
+        : "Addım 2 (Kontekst və İnkar): İnkar və ya rəsmi prosedural kontekst tapılmadı. Aktiv köçürmə və ya məxfi məlumat tələbi yoxdur.";
+
+  let step3 = `Addım 3 (Vektor və Formula İzahı): V1: ${action.v1}%, V2: ${action.v2}%, V3: ${action.v3}%, V4: ${action.v4}%, domen: ${domainScore}% → Çəkili bal: ${basePercent}% (Karantin həddi: ${line}%).`;
+  if (ruleA && ruleB) {
+    step3 += ` Qayda A (Credential/OTP Oğurluğu) və Qayda B (CEO Fraud): Aktiv parol/OTP tələbi + aktiv köçürmə tələbi → Yekun risk: ${overall}%.`;
+  } else if (ruleB) {
+    const why = action.v4 >= 20 ? "Rəhbər təqlidi" : action.secrecy ? "məxfilik tələbi" : "təzyiq";
+    step3 += ` Qayda B (CEO Fraud): Aktiv köçürmə tələbi + ${why} → Yekun risk: ${overall}%.`;
+  } else if (ruleA) {
+    step3 += ` Qayda A (Credential/OTP Oğurluğu): Aktiv parol/OTP tələbi → Yekun risk: ${overall}%.`;
+  } else if (noDemand && basePercent > overall) {
+    step3 += ` Aktiv tələb yoxdur (V1 < 40 və V3 < 40), yekun risk ${overall}% səviyyəsində saxlanıldı və avtomatik karantin işə düşmədi.`;
   }
 
-  const pressureWords = signals.map((signal) => `«${signal.label}»`);
-  const findings = discourse.awarenessOnly
-    ? [...reasoning, ...classes, ...domain.reasons]
-    : [
-        ...reasoning,
-        ...reportIntents,
-        ...(payloadCarrier ? ["Zərərli Payload Daşıyıcısı: maliyyə və ya şantaj niyyəti 60%-i keçir, keçid təmiz domen olsa belə məktub 85%+ risk alır."] : []),
-        ...(wall.forced && !discourse.oauth ? ["Kiber Divar: keçid olmasa belə kritik niyyət avtomatik karantinə alındı."] : []),
-        ...(pressureWords.length > 0 ? [`Təzyiq və ya oğurluq sözləri: ${pressureWords.join(", ")}`] : []),
-        ...markers.map((marker) => `Həssas məlumat izi: ${marker.label}.`),
-        ...domain.reasons,
-        ...extras.reasons,
-      ];
-  if (findings.length === 0) findings.push("Mətndə fişinq əlaməti tapılmadı. Üslub rəsmi daxili yazışmaya uyğundur.");
+  const reasoning = [step1, step2, step3];
+  const intents: string[] = [];
+  if (action.v1 >= 70) intents.push("Financial / Invoice Fraud");
+  if (action.v3 >= 70) intents.push("Credential / OTP Theft");
+  if (intents.length === 0 && action.contextQuotes.length > 0) intents.push("Security Awareness / Safe Notice");
+
+  const techniques: AttackTechnique[] = [];
+  if (!noDemand) {
+    if (domainScore >= 40) techniques.push({ code: "T1566.002", name: "Spearphishing Link" });
+    else techniques.push({ code: "T1566", name: "Phishing" });
+    if (action.v1 >= 70 && action.v4 >= 20) techniques.push({ code: "T1656", name: "Impersonation" });
+    if (/ransom|sifrelen|bitlocker|decrypt|fidye|fidya/.test(normalizeText(text))) {
+      techniques.push({ code: "T1486", name: "Data Encrypted for Impact" });
+    }
+  }
+
+  const quarantine = noDemand
+    ? "tehlukesiz"
+    : overall >= line
+      ? "alindi"
+      : overall >= Math.max(35, line - 25)
+        ? "nezaret"
+        : "tehlukesiz";
+
+  const findings = [...reasoning];
+  if (intents.length > 0) findings.push(`Niyyət sinfi: ${intents.join("; ")}.`);
+  if (action.financial || action.credential) {
+    for (const marker of markers) {
+      if (marker.label === "məbləğ və valyuta") continue;
+      if (marker.label === "OTP kod tələbi" && !action.credential) continue;
+      findings.push(`Həssas məlumat izi: ${marker.label}.`);
+    }
+  }
+  findings.push(...domain.reasons);
+  if (!action.financial && !action.credential && action.contextQuotes.length === 0 && findings.length === 3) {
+    findings.push("Mətndə aktiv köçürmə və ya məxfi məlumat tələbi tapılmadı.");
+  }
+
+  const vectors: IntentVector[] = (["V1", "V2", "V3", "V4"] as const).map((id) => ({
+    id,
+    name: VECTOR_META[id].name,
+    score: id === "V1" ? action.v1 : id === "V2" ? action.v2 : id === "V3" ? action.v3 : action.v4,
+    base: VECTOR_META[id].base,
+    terms: action.terms[id],
+  }));
 
   return {
     overall,
-    urgency,
+    urgency: action.v2,
     domain: domainScore,
-    style,
-    theft,
+    style: action.secrecy ? 24 : 0,
+    theft: Math.max(action.v1, action.v3),
     quarantine,
-    highlights: discourse.awarenessOnly ? [{ text, hit: false }] : buildHighlights(text, markers, [...wall.spans, ...lure.spans, ...semantic.spans]),
-    matchedTerms: discourse.awarenessOnly
-      ? []
-      : [...new Set([...signals.map((signal) => signal.label), ...markers.map((marker) => marker.label), ...wall.labels, ...lure.labels, ...semantic.labels])],
+    highlights: action.financial || action.credential ? evidenceHighlights(text, action.highlightPhrases) : [{ text, hit: false }],
+    matchedTerms: action.financial || action.credential ? [...new Set(action.demandQuotes)] : [],
     findings,
     analyzedUrl: domain.analyzedUrl,
-    intents: reportIntents,
+    intents,
     techniques,
-    critical,
+    critical: overall >= 84 && quarantine === "alindi",
     vectors,
     reasoning,
-    payloadCarrier,
-    obfuscated: semantic.obfuscated,
+    payloadCarrier: false,
+    obfuscated: action.obfuscated,
   };
 }

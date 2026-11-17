@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Mic, Pause, Play, Upload } from "lucide-react";
 import { voiceSamples } from "../data/mockData.ts";
 import type { VoiceSample } from "../types.ts";
-import { decodeToMono, shortSpeechReport, trimAndNormalize } from "../lib/audio.ts";
+import { decodeToMono, shortSpeechReport } from "../lib/audio.ts";
 import { analyzePcm, verdictFor, type AcousticReport } from "../lib/dsp.ts";
-import { presentAcoustic } from "../lib/forensicClass.ts";
 import { estimateLipSync, type VideoForensics } from "../lib/videoSync.ts";
 import { inspectImageFile, inspectVideoFrame, type StillForensics } from "../lib/vision.ts";
 import { useSoc } from "../context/SocContext.tsx";
@@ -14,6 +13,36 @@ import { VisionPanel } from "./VisionPanel.tsx";
 import { DefenseInsight } from "./DefenseInsight.tsx";
 import { Meter, Panel, ScanSweep } from "./ui.tsx";
 import { cn } from "../lib/utils.ts";
+
+function concatPcm(chunks: Float32Array[]): Float32Array {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function tailPcm(chunks: Float32Array[], samplesNeeded: number): Float32Array {
+  let total = 0;
+  let start = chunks.length;
+  while (start > 0 && total < samplesNeeded) {
+    start -= 1;
+    total += chunks[start]?.length ?? 0;
+  }
+  const merged = concatPcm(chunks.slice(start));
+  if (merged.length <= samplesNeeded) return merged;
+  return merged.subarray(merged.length - samplesNeeded);
+}
+
+function medianNumber(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
 
 export function DeepfakeDetector() {
   const { registerDeepfakeCatch } = useSoc();
@@ -42,6 +71,9 @@ export function DeepfakeDetector() {
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
+  const consensusRef = useRef<AcousticReport[]>([]);
+  const liveBusyRef = useRef(false);
+  const liveStampRef = useRef(0);
   const micGraphRef = useRef<{ source: MediaStreamAudioSourceNode; processor: ScriptProcessorNode; mute: GainNode } | null>(null);
   const previewRef = useRef<string | null>(null);
 
@@ -109,14 +141,49 @@ export function DeepfakeDetector() {
     [],
   );
 
+  function resetConsensus() {
+    consensusRef.current = [];
+    liveBusyRef.current = false;
+    liveStampRef.current = 0;
+  }
+
   function clearAcoustic() {
     stopPlayback();
+    resetConsensus();
     setPlaying(false);
     setReport(null);
     setSamples(null);
     setBuffer(null);
     setError("");
     setAudioLabel("");
+  }
+
+  function settleLiveWindow(next: AcousticReport) {
+    const history = consensusRef.current;
+    history.push(next);
+    if (history.length > 5) history.shift();
+    const reliable = history.filter((item) => !item.unreliable && item.audioClass !== "uncertain");
+    if (reliable.length === 0) {
+      setReport(next);
+      setAudioLabel("Canlı mikrofon yazısı");
+      return;
+    }
+    const counts = new Map<AcousticReport["audioClass"], number>();
+    for (const item of reliable) counts.set(item.audioClass, (counts.get(item.audioClass) ?? 0) + 1);
+    let winner: AcousticReport["audioClass"] = reliable[reliable.length - 1]?.audioClass ?? "uncertain";
+    let winnerCount = 0;
+    for (const [kind, count] of counts) {
+      if (count > winnerCount) {
+        winner = kind;
+        winnerCount = count;
+      }
+    }
+    if (reliable.length >= 2 && winnerCount / reliable.length < 0.6) return;
+    const chosen = reliable.filter((item) => item.audioClass === winner);
+    const template = chosen[chosen.length - 1];
+    if (!template) return;
+    setReport({ ...template, probability: Math.round(medianNumber(chosen.map((item) => item.probability))) });
+    setAudioLabel("Canlı mikrofon yazısı");
   }
 
   function releaseMic() {
@@ -139,23 +206,16 @@ export function DeepfakeDetector() {
     setReport(null);
     setSamples(null);
     setBuffer(null);
+    resetConsensus();
     try {
-      const prepared = trimAndNormalize(raw, rate);
-      if (prepared.activeSec < 1.5 || prepared.samples.length < Math.round(rate * 0.2)) {
-        setReport(shortSpeechReport());
-        setAudioLabel("Canlı mikrofon yazısı");
-        setScanToken((token) => token + 1);
-        return;
-      }
+      const limit = Math.min(raw.length, Math.max(1, Math.round(rate * 12)));
+      const slice = raw.subarray(0, limit);
+      const nextReport = analyzePcm(slice, rate);
+      consensusRef.current = [nextReport];
       const context = ensureGraph();
-      const audioBuffer = context.createBuffer(1, prepared.samples.length, rate);
-      audioBuffer.getChannelData(0).set(prepared.samples);
-      const nextReport = presentAcoustic(analyzePcm(prepared.samples, rate), {
-        name: "canli-mikrofon",
-        liveMic: true,
-        durationSec: prepared.activeSec,
-      });
-      setSamples(prepared.samples);
+      const audioBuffer = context.createBuffer(1, Math.max(1, slice.length), rate);
+      if (slice.length > 0) audioBuffer.getChannelData(0).set(slice);
+      setSamples(slice.length > 0 ? slice : null);
       setSampleRate(rate);
       setBuffer(audioBuffer);
       setReport(nextReport);
@@ -192,18 +252,14 @@ export function DeepfakeDetector() {
       setVideo(null);
       setStill(null);
     }
-    const sourceName = options?.sourceName || file?.name || nextLabel;
+    resetConsensus();
     try {
       const context = ensureGraph();
       const decoded = await decodeToMono(context, data);
       const limit = Math.min(decoded.samples.length, decoded.sampleRate * 12);
       const slice = decoded.samples.subarray(0, limit);
-      const durationSec = decoded.sampleRate > 0 ? slice.length / decoded.sampleRate : 0;
-      const nextReport = presentAcoustic(analyzePcm(slice, decoded.sampleRate), {
-        name: sourceName,
-        liveMic: options?.liveMic,
-        durationSec,
-      });
+      const nextReport = analyzePcm(slice, decoded.sampleRate);
+      consensusRef.current = [nextReport];
       if (videoFile && file) {
         const lip = await estimateLipSync(file, slice, decoded.sampleRate);
         const frame = await inspectVideoFrame(file);
@@ -343,7 +399,7 @@ export function DeepfakeDetector() {
     pcmChunksRef.current = [];
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
       streamRef.current = stream;
       const source = context.createMediaStreamSource(stream);
@@ -354,9 +410,22 @@ export function DeepfakeDetector() {
       const processor = context.createScriptProcessor(4096, 1, 1);
       const mute = context.createGain();
       mute.gain.value = 0;
+      const rateNow = context.sampleRate;
       processor.onaudioprocess = (event) => {
         const channel = event.inputBuffer.getChannelData(0);
         pcmChunksRef.current.push(new Float32Array(channel));
+        const now = performance.now();
+        if (liveBusyRef.current || now - liveStampRef.current < 500) return;
+        const collected = pcmChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+        if (collected < rateNow * 1.5) return;
+        liveStampRef.current = now;
+        liveBusyRef.current = true;
+        try {
+          const tail = tailPcm(pcmChunksRef.current, Math.round(rateNow * 2.5));
+          settleLiveWindow(analyzePcm(tail, rateNow));
+        } finally {
+          liveBusyRef.current = false;
+        }
       };
       source.connect(processor);
       processor.connect(mute);

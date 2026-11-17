@@ -74,7 +74,6 @@ function bitReverse(frame: Float64Array): Float64Array {
   }
   return real;
 }
-
 function spectrumOf(samples: Float32Array, offset: number): Float64Array {
   const windowed = new Float64Array(FFT);
   const length = Math.min(FRAME, samples.length - offset);
